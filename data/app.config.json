@@ -6,7 +6,6 @@
     "localPath": "./data/repo",
     "remoteUrl": "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
     "branch": "master",
-    "defaultFile": "nacos-config/config/dev/app.yaml",
     "configRoot": "nacos-config/config",
     "allowedExtensions": [
       ".json",

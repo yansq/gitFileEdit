@@ -31,6 +31,10 @@ const COMMON_TEXT_NAMES = new Set([
   ".npmrc"
 ]);
 
+function logRepoDebug(scope: string, payload: Record<string, unknown>): void {
+  console.log(`[repo-debug] ${scope}`, JSON.stringify(payload, null, 2));
+}
+
 function normalizeRepoRelativePath(repoPath: string, filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
   const absolutePath = path.resolve(repoPath, normalized);
@@ -131,13 +135,18 @@ export async function inspectRepo(
   const repoPath = resolveRepoPath(config);
   const exists = await repoExists(repoPath);
   if (!exists) {
+    logRepoDebug("inspectRepo.missing", {
+      repoPath,
+      branch: config.repo.branch,
+      lastError,
+      lastSyncedAt: runtime.lastSyncedAt
+    });
     return {
       ready: false,
       exists: false,
       repoPath,
       remoteUrl: config.repo.remoteUrl,
       branch: config.repo.branch,
-      defaultFile: config.repo.defaultFile,
       currentBranch: null,
       head: null,
       lastError,
@@ -151,26 +160,39 @@ export async function inspectRepo(
       runGit(["rev-parse", "HEAD"], { cwd: repoPath })
     ]);
 
+    logRepoDebug("inspectRepo.ready", {
+      repoPath,
+      branch: config.repo.branch,
+      currentBranch,
+      head,
+      lastError,
+      lastSyncedAt: runtime.lastSyncedAt
+    });
+
     return {
       ready: true,
       exists: true,
       repoPath,
       remoteUrl: config.repo.remoteUrl,
       branch: config.repo.branch,
-      defaultFile: config.repo.defaultFile,
       currentBranch: currentBranch || null,
       head: head || null,
       lastError,
       lastSyncedAt: runtime.lastSyncedAt
     };
   } catch (error) {
+    logRepoDebug("inspectRepo.error", {
+      repoPath,
+      branch: config.repo.branch,
+      error: (error as Error).message,
+      lastSyncedAt: runtime.lastSyncedAt
+    });
     return {
       ready: false,
       exists: true,
       repoPath,
       remoteUrl: config.repo.remoteUrl,
       branch: config.repo.branch,
-      defaultFile: config.repo.defaultFile,
       currentBranch: null,
       head: null,
       lastError: (error as Error).message,
@@ -188,6 +210,11 @@ export async function syncRepo(
   await mkdir(path.dirname(repoPath), { recursive: true });
 
   if (!(await repoExists(repoPath))) {
+    logRepoDebug("syncRepo.clone.start", {
+      repoPath,
+      branch: config.repo.branch,
+      remoteUrl: config.repo.remoteUrl
+    });
     await runGit(
       [
         "clone",
@@ -199,11 +226,24 @@ export async function syncRepo(
       ],
       { cwd: path.dirname(repoPath) }
     );
+    logRepoDebug("syncRepo.clone.done", {
+      repoPath,
+      branch: config.repo.branch
+    });
     return;
   }
 
+  logRepoDebug("syncRepo.pull.start", {
+    repoPath,
+    branch: config.repo.branch,
+    remoteUrl: config.repo.remoteUrl
+  });
   await runGit(["pull", "--rebase", remoteUrl, config.repo.branch], {
     cwd: repoPath
+  });
+  logRepoDebug("syncRepo.pull.done", {
+    repoPath,
+    branch: config.repo.branch
   });
 }
 
@@ -244,13 +284,23 @@ export async function listRepoFiles(config: AppConfig): Promise<RepoFileSummary[
     runGit(["ls-files"], { cwd: repoPath }),
     runGit(["ls-files", "--others", "--exclude-standard"], { cwd: repoPath })
   ]);
+  const trackedFiles = trackedOutput
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const untrackedFiles = untrackedOutput
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const visibleCandidates = [...trackedFiles, ...untrackedFiles].filter((item) =>
+    isInVisibleRoots(item, visibleRoots)
+  );
+  const allowedCandidates = visibleCandidates.filter((item) =>
+    isAllowedFile(item, config.repo.allowedExtensions)
+  );
 
   const candidates = new Set(
-    [...trackedOutput.split("\n"), ...untrackedOutput.split("\n")]
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .filter((item) => isInVisibleRoots(item, visibleRoots))
-      .filter((item) => isAllowedFile(item, config.repo.allowedExtensions))
+    allowedCandidates
   );
 
   const files = await Promise.all(
@@ -259,7 +309,28 @@ export async function listRepoFiles(config: AppConfig): Promise<RepoFileSummary[
       .map((filePath) => collectFilesystemStats(repoPath, filePath))
   );
 
-  return files.filter((file): file is RepoFileSummary => Boolean(file));
+  const result = files.filter((file): file is RepoFileSummary => Boolean(file));
+  const filesByRoot = Object.fromEntries(
+    visibleRoots.map((root) => [
+      root,
+      result.filter((file) => file.path === root || file.path.startsWith(`${root}/`)).length
+    ])
+  );
+
+  logRepoDebug("listRepoFiles.summary", {
+    repoPath,
+    visibleRoots,
+    trackedCount: trackedFiles.length,
+    untrackedCount: untrackedFiles.length,
+    visibleCandidateCount: visibleCandidates.length,
+    allowedCandidateCount: allowedCandidates.length,
+    resultCount: result.length,
+    filesByRoot,
+    sampleVisibleCandidates: visibleCandidates.slice(0, 20),
+    sampleResultFiles: result.slice(0, 20).map((file) => file.path)
+  });
+
+  return result;
 }
 
 async function readGitFile(

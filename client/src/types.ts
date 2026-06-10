@@ -14,7 +14,6 @@ export interface RepoStatus {
   repoPath: string;
   remoteUrl: string;
   branch: string;
-  defaultFile: string;
   currentBranch: string | null;
   head: string | null;
   lastError: string | null;
@@ -31,7 +30,6 @@ export interface BootstrapResponse {
   config: {
     remoteUrl: string;
     branch: string;
-    defaultFile: string;
     environments: RepoEnvironmentOption[];
     visibleRoots: string[];
     port: number;

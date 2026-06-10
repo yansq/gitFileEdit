@@ -6,7 +6,6 @@ export interface AppConfig {
     localPath: string;
     remoteUrl: string;
     branch: string;
-    defaultFile: string;
     configRoot?: string;
     visibleRoots?: string[];
     allowedExtensions: string[];
@@ -35,7 +34,6 @@ export interface RepoStatus {
   repoPath: string;
   remoteUrl: string;
   branch: string;
-  defaultFile: string;
   currentBranch: string | null;
   head: string | null;
   lastError: string | null;

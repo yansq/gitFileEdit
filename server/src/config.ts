@@ -37,7 +37,6 @@ const DEFAULT_APP_CONFIG: AppConfig = {
     localPath: "./data/repo",
     remoteUrl: "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
     branch: "main",
-    defaultFile: `${DEFAULT_CONFIG_ROOT}/dev/app.yaml`,
     configRoot: DEFAULT_CONFIG_ROOT,
     allowedExtensions: [
       ".json",
@@ -80,8 +79,35 @@ async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
   }
 }
 
+function normalizeAppConfig(rawConfig: AppConfig): AppConfig {
+  return {
+    server: {
+      port: rawConfig.server?.port || DEFAULT_APP_CONFIG.server.port
+    },
+    repo: {
+      localPath: rawConfig.repo?.localPath || DEFAULT_APP_CONFIG.repo.localPath,
+      remoteUrl: rawConfig.repo?.remoteUrl || DEFAULT_APP_CONFIG.repo.remoteUrl,
+      branch: rawConfig.repo?.branch || DEFAULT_APP_CONFIG.repo.branch,
+      configRoot: rawConfig.repo?.configRoot || DEFAULT_APP_CONFIG.repo.configRoot,
+      visibleRoots: rawConfig.repo?.visibleRoots,
+      allowedExtensions:
+        rawConfig.repo?.allowedExtensions?.length
+          ? rawConfig.repo.allowedExtensions
+          : DEFAULT_APP_CONFIG.repo.allowedExtensions,
+      auth: {
+        username: rawConfig.repo?.auth?.username || DEFAULT_APP_CONFIG.repo.auth.username,
+        password: rawConfig.repo?.auth?.password || DEFAULT_APP_CONFIG.repo.auth.password
+      },
+      commitMessagePrefix:
+        rawConfig.repo?.commitMessagePrefix ?? DEFAULT_APP_CONFIG.repo.commitMessagePrefix,
+      cloneOnStart: rawConfig.repo?.cloneOnStart ?? DEFAULT_APP_CONFIG.repo.cloneOnStart
+    }
+  };
+}
+
 export async function loadAppConfig(): Promise<AppConfig> {
-  return readJsonFile(APP_CONFIG_PATH, DEFAULT_APP_CONFIG);
+  const config = await readJsonFile(APP_CONFIG_PATH, DEFAULT_APP_CONFIG);
+  return normalizeAppConfig(config);
 }
 
 export async function loadRuntimeState(): Promise<RuntimeState> {
@@ -95,9 +121,10 @@ export async function saveRuntimeState(state: RuntimeState): Promise<RuntimeStat
 }
 
 export async function saveAppConfig(config: AppConfig): Promise<AppConfig> {
+  const normalizedConfig = normalizeAppConfig(config);
   await ensureParent(APP_CONFIG_PATH);
-  await writeFile(APP_CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
-  return config;
+  await writeFile(APP_CONFIG_PATH, JSON.stringify(normalizedConfig, null, 2), "utf8");
+  return normalizedConfig;
 }
 
 export async function updateCommitMessagePrefix(prefix: string): Promise<AppConfig> {

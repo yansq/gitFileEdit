@@ -36,21 +36,39 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "未知错误";
 }
 
+function logApiDebug(scope: string, payload: Record<string, unknown>): void {
+  console.log(`[api-debug] ${scope}`, JSON.stringify(payload, null, 2));
+}
+
 async function buildBootstrapPayload() {
   const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
   const repoStatus = await inspectRepo(config, runtime, lastRepoError);
   const files = repoStatus.ready ? await listRepoFiles(config) : [];
-  const selectedFile = files.some((file) => file.path === config.repo.defaultFile)
-    ? config.repo.defaultFile
-    : (files[0]?.path ?? null);
+  const selectedFile = files[0]?.path ?? null;
+  const environments = getEnvironmentOptions(config);
+  const visibleRoots = normalizeVisibleRoots(config);
+
+  logApiDebug("bootstrap.summary", {
+    repoReady: repoStatus.ready,
+    repoExists: repoStatus.exists,
+    repoPath: repoStatus.repoPath,
+    branch: repoStatus.branch,
+    currentBranch: repoStatus.currentBranch,
+    head: repoStatus.head,
+    lastError: repoStatus.lastError,
+    visibleRoots,
+    environmentRoots: environments.map((item) => item.root),
+    fileCount: files.length,
+    selectedFile,
+    sampleFiles: files.slice(0, 20).map((file) => file.path)
+  });
 
   return {
     config: {
       remoteUrl: config.repo.remoteUrl,
       branch: config.repo.branch,
-      defaultFile: config.repo.defaultFile,
-      environments: getEnvironmentOptions(config),
-      visibleRoots: normalizeVisibleRoots(config),
+      environments,
+      visibleRoots,
       port: config.server.port
     },
     gitSettings: toGitSettingsSummary(config),
