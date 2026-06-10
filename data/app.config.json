@@ -4,7 +4,7 @@
   },
   "repo": {
     "localPath": "./data/repo",
-    "remoteUrl": "https://example.com/your/repository.git",
+    "remoteUrl": "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
     "branch": "main",
     "defaultFile": "dev/app.yaml",
     "visibleRoots": ["dev", "sit", "uat", "prod"],
