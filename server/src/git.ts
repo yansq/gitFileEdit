@@ -349,30 +349,17 @@ export async function writeRepoFile(
 
 export async function commitAndPushFile(
   config: AppConfig,
-  runtime: RuntimeState,
+  _runtime: RuntimeState,
   input: {
     path: string;
     message: string;
-    username?: string;
-    email?: string;
-    password?: string;
   }
 ): Promise<{ head: string; path: string }> {
   const repoPath = resolveRepoPath(config);
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, input.path);
-  const authorName = input.username?.trim() || runtime.git.username.trim();
-  const authorEmail =
-    input.email?.trim() ||
-    runtime.git.email.trim() ||
-    (authorName ? `${authorName}@local` : "");
-  const commitMessage =
-    input.message.trim() ||
-    runtime.git.defaultCommitMessage ||
-    `chore: update ${repoRelativePath}`;
-
-  if (!authorName) {
-    throw new Error("请先配置 Git 用户名");
-  }
+  const detailMessage = input.message.trim();
+  const prefix = config.repo.commitMessagePrefix || "";
+  const commitMessage = `${prefix}${detailMessage}`.trim();
 
   const workingTreeStatus = await runGit(["status", "--porcelain", "--", repoRelativePath], {
     cwd: repoPath
@@ -383,16 +370,12 @@ export async function commitAndPushFile(
 
   const pushRemoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, {
     username: config.repo.auth.username,
-    password: input.password?.trim() || config.repo.auth.password
+    password: config.repo.auth.password
   });
 
   await runGit(["add", "--", repoRelativePath], { cwd: repoPath });
   await runGit(
     [
-      "-c",
-      `user.name=${authorName}`,
-      "-c",
-      `user.email=${authorEmail}`,
       "commit",
       "--no-gpg-sign",
       "-m",

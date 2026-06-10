@@ -8,7 +8,7 @@ import {
   normalizeVisibleRoots,
   resolveRepoPath,
   toGitSettingsSummary,
-  updateRuntimeGitSettings
+  updateCommitMessagePrefix
 } from "./config";
 import {
   commitAndPushFile,
@@ -53,7 +53,7 @@ async function buildBootstrapPayload() {
       visibleRoots: normalizeVisibleRoots(config),
       port: config.server.port
     },
-    gitSettings: toGitSettingsSummary(runtime),
+    gitSettings: toGitSettingsSummary(config),
     repoStatus,
     files,
     selectedFile
@@ -129,16 +129,13 @@ app.put("/api/file", async (request, response, next) => {
 
 app.post("/api/settings/git", async (request, response, next) => {
   try {
-    const runtime = await updateRuntimeGitSettings({
-      username: typeof request.body.username === "string" ? request.body.username.trim() : undefined,
-      email: typeof request.body.email === "string" ? request.body.email.trim() : undefined,
-      defaultCommitMessage:
-        typeof request.body.defaultCommitMessage === "string"
-          ? request.body.defaultCommitMessage.trim()
-          : undefined
-    });
+    const prefix =
+      typeof request.body.commitMessagePrefix === "string"
+        ? request.body.commitMessagePrefix
+        : "";
+    const config = await updateCommitMessagePrefix(prefix);
     response.json({
-      gitSettings: toGitSettingsSummary(runtime)
+      gitSettings: toGitSettingsSummary(config)
     });
   } catch (error) {
     next(error);
@@ -166,34 +163,16 @@ app.post("/api/repo/sync", async (_request, response, next) => {
 app.post("/api/commit", async (request, response, next) => {
   try {
     const filePath = String(request.body.path ?? "").trim();
-    const message = String(request.body.message ?? "").trim();
+    const detailMessage = String(request.body.message ?? "").trim();
     if (!filePath) {
       response.status(400).json({ error: "缺少文件路径" });
       return;
     }
 
-    const username =
-      typeof request.body.username === "string" ? request.body.username.trim() : undefined;
-    const email =
-      typeof request.body.email === "string" ? request.body.email.trim() : undefined;
-    const password =
-      typeof request.body.password === "string" && request.body.password.trim()
-        ? request.body.password
-        : undefined;
-
     const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
     const result = await commitAndPushFile(config, runtime, {
       path: filePath,
-      message,
-      username,
-      email,
-      password
-    });
-
-    await updateRuntimeGitSettings({
-      username,
-      email,
-      defaultCommitMessage: message || undefined
+      message: detailMessage
     });
     await markLastSyncedAt(new Date().toISOString());
     await ensureWatcher();

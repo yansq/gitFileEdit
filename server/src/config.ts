@@ -1,11 +1,6 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import type {
-  AppConfig,
-  GitSettingsSummary,
-  RepoEnvironmentOption,
-  RuntimeState
-} from "./types";
+import type { AppConfig, GitSettingsSummary, RepoEnvironmentOption, RuntimeState } from "./types";
 
 export const PROJECT_ROOT = path.resolve(__dirname, "../..");
 const APP_CONFIG_PATH = path.resolve(PROJECT_ROOT, "data/app.config.json");
@@ -151,8 +146,8 @@ export function getEnvironmentOptions(config: AppConfig): RepoEnvironmentOption[
   }));
 }
 
-export function toGitSettingsSummary(state: RuntimeState): GitSettingsSummary {
+export function toGitSettingsSummary(config: AppConfig): GitSettingsSummary {
   return {
-    commitMessagePrefix: ""
+    commitMessagePrefix: config.repo.commitMessagePrefix || ""
   };
 }

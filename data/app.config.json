@@ -32,6 +32,7 @@
       "username": "224270",
       "password": "nbcb,123"
     },
+    "commitMessagePrefix": "config: ",
     "cloneOnStart": true
   }
 }

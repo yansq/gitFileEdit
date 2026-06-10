@@ -5,9 +5,7 @@ export interface RepoFileSummary {
 }
 
 export interface GitSettingsSummary {
-  username: string;
-  email: string;
-  defaultCommitMessage: string;
+  commitMessagePrefix: string;
 }
 
 export interface RepoStatus {

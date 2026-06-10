@@ -126,9 +126,7 @@ export default function App(): JSX.Element {
   const [editorContent, setEditorContent] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [gitForm, setGitForm] = useState({
-    username: "",
-    email: "",
-    password: "",
+    commitMessagePrefix: "",
     commitMessage: ""
   });
   const [settingsSeeded, setSettingsSeeded] = useState(false);
@@ -164,10 +162,8 @@ export default function App(): JSX.Element {
       setSelectedPath(nextPath);
       if (!settingsSeeded || !preserveForm) {
         setGitForm({
-          username: data.gitSettings.username,
-          email: data.gitSettings.email,
-          password: "",
-          commitMessage: data.gitSettings.defaultCommitMessage
+          commitMessagePrefix: data.gitSettings.commitMessagePrefix,
+          commitMessage: ""
         });
         setSettingsSeeded(true);
       }
@@ -249,9 +245,7 @@ export default function App(): JSX.Element {
     const response = await requestJson<{ gitSettings: GitSettingsSummary }>("/api/settings/git", {
       method: "POST",
       body: JSON.stringify({
-        username: gitForm.username,
-        email: gitForm.email,
-        defaultCommitMessage: gitForm.commitMessage
+        commitMessagePrefix: gitForm.commitMessagePrefix
       })
     });
 
@@ -266,7 +260,7 @@ export default function App(): JSX.Element {
       );
       setGitForm((current) => ({
         ...current,
-        password: ""
+        commitMessagePrefix: response.gitSettings.commitMessagePrefix
       }));
     });
   }
@@ -329,15 +323,16 @@ export default function App(): JSX.Element {
         method: "POST",
         body: JSON.stringify({
           path: selectedPath,
-          message: gitForm.commitMessage,
-          username: gitForm.username,
-          email: gitForm.email,
-          password: gitForm.password
+          message: gitForm.commitMessage
         })
       });
 
       await refreshBootstrap(selectedPath);
       await refreshFile(selectedPath, false);
+      setGitForm((current) => ({
+        ...current,
+        commitMessage: ""
+      }));
       setMessage("修改已提交并推送到远程仓库");
     } catch (commitError) {
       setError((commitError as Error).message);
@@ -576,51 +571,24 @@ export default function App(): JSX.Element {
         <aside className="panel settings-column">
           <h2>提交设置</h2>
           <label className="form-row">
-            <span>Git 用户名</span>
+            <span>Commit Message 前缀</span>
             <input
-              value={gitForm.username}
+              value={gitForm.commitMessagePrefix}
               onChange={(event) =>
                 setGitForm((current) => ({
                   ...current,
-                  username: event.target.value
+                  commitMessagePrefix: event.target.value
                 }))
               }
             />
           </label>
 
           <label className="form-row">
-            <span>Git 邮箱</span>
-            <input
-              value={gitForm.email}
-              onChange={(event) =>
-                setGitForm((current) => ({
-                  ...current,
-                  email: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <label className="form-row">
-            <span>Git 密码或 Token</span>
-            <input
-              type="password"
-              placeholder="留空则使用配置文件中的默认仓库密码"
-              value={gitForm.password}
-              onChange={(event) =>
-                setGitForm((current) => ({
-                  ...current,
-                  password: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <label className="form-row">
-            <span>Commit Message</span>
+            <span>本次提交说明</span>
             <textarea
-              rows={4}
+              rows={6}
               value={gitForm.commitMessage}
+              placeholder={"建议包含：\n提交人：张三\n修改环境：开发环境\n修改内容：调整 xxx 配置为 yyy"}
               onChange={(event) =>
                 setGitForm((current) => ({
                   ...current,
@@ -631,11 +599,11 @@ export default function App(): JSX.Element {
           </label>
 
           <button className="secondary-button full-width" onClick={() => void saveGitSettings()}>
-            保存 Git 设置
+            保存前缀
           </button>
 
           <div className="settings-note">
-            查看和同步仓库使用配置文件中的默认账号密码；这里输入的密码仅在本次提交推送时优先生效。
+            提交说明建议包含提交人、修改环境、修改内容。这里仅做提醒，不会阻止提交；最终 commit message 前缀始终读取服务端配置。
           </div>
         </aside>
       </div>
