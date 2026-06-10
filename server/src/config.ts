@@ -61,14 +61,12 @@ const DEFAULT_APP_CONFIG: AppConfig = {
       username: "224270",
       password: "nbcb,123"
     },
+    commitMessagePrefix: "config: ",
     cloneOnStart: true
   }
 };
 
 const DEFAULT_RUNTIME_STATE: RuntimeState = {
-  git: {
-    defaultCommitMessage: "config: "
-  },
   lastSyncedAt: null
 };
 
@@ -101,19 +99,22 @@ export async function saveRuntimeState(state: RuntimeState): Promise<RuntimeStat
   return state;
 }
 
-export async function updateRuntimeGitSettings(input: {
-  defaultCommitMessage?: string;
-}): Promise<RuntimeState> {
-  const current = await loadRuntimeState();
-  const next: RuntimeState = {
+export async function saveAppConfig(config: AppConfig): Promise<AppConfig> {
+  await ensureParent(APP_CONFIG_PATH);
+  await writeFile(APP_CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+  return config;
+}
+
+export async function updateCommitMessagePrefix(prefix: string): Promise<AppConfig> {
+  const current = await loadAppConfig();
+  const next: AppConfig = {
     ...current,
-    git: {
-      ...current.git,
-      defaultCommitMessage:
-        input.defaultCommitMessage ?? current.git.defaultCommitMessage
+    repo: {
+      ...current.repo,
+      commitMessagePrefix: prefix
     }
   };
-  return saveRuntimeState(next);
+  return saveAppConfig(next);
 }
 
 export async function markLastSyncedAt(timestamp: string): Promise<RuntimeState> {
@@ -152,6 +153,6 @@ export function getEnvironmentOptions(config: AppConfig): RepoEnvironmentOption[
 
 export function toGitSettingsSummary(state: RuntimeState): GitSettingsSummary {
   return {
-    defaultCommitMessage: state.git.defaultCommitMessage
+    commitMessagePrefix: ""
   };
 }
