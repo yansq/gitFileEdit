@@ -35,7 +35,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   },
   repo: {
     localPath: "./data/repo",
-    remoteUrl: "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
+    remoteUrl: "http://12.103.118.210:10880/AI/aifp-config-tob.git",
     branch: "main",
     configRoot: DEFAULT_CONFIG_ROOT,
     allowedExtensions: [
@@ -53,8 +53,8 @@ const DEFAULT_APP_CONFIG: AppConfig = {
       ".md"
     ],
     auth: {
-      username: "224270",
-      password: "nbcb,123"
+      username: "rhb",
+      password: "nbcb,111"
     },
     commitMessagePrefix: "config: ",
     cloneOnStart: true
