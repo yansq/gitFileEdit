@@ -213,28 +213,65 @@ button {
   gap: 10px;
 }
 
-.file-item {
+.file-tree {
+  display: grid;
+  gap: 6px;
+}
+
+.file-tree-folder[open] {
+  display: grid;
+  gap: 6px;
+}
+
+.file-tree-folder__summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  color: #1b2a33;
+  font-weight: 600;
+  background: rgba(232, 241, 240, 0.6);
+  cursor: pointer;
+}
+
+.file-tree-folder__summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-tree-folder__icon {
+  color: #4d6966;
+  font-size: 12px;
+}
+
+.file-tree-folder__name {
+  word-break: break-word;
+}
+
+.file-tree-file {
+  display: grid;
+  gap: 4px;
   text-align: left;
   border: 1px solid rgba(24, 48, 57, 0.08);
-  border-radius: 18px;
-  padding: 12px 14px;
+  border-radius: 16px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.72);
 }
 
-.file-item--active {
+.file-tree-file--active {
   border-color: rgba(24, 143, 117, 0.36);
   background: linear-gradient(135deg, rgba(18, 118, 112, 0.12), rgba(29, 140, 104, 0.08));
 }
 
-.file-path {
+.file-tree-file__name {
   display: block;
   font-weight: 600;
   color: #1b2a33;
-  margin-bottom: 6px;
   word-break: break-word;
 }
 
-.file-meta {
+.file-tree-file__meta {
   display: block;
   color: #617278;
   font-size: 12px;

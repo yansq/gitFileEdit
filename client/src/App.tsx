@@ -15,6 +15,15 @@ interface DiffRow {
   text: string;
 }
 
+interface FileTreeNode {
+  id: string;
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  children: FileTreeNode[];
+  file?: RepoFileSummary;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -70,6 +79,102 @@ function replaceEnvironmentRoot(
 
   const suffix = filePath.slice(currentEnvironment.root.length);
   return `${nextEnvironment.root}${suffix}`;
+}
+
+function buildFileTree(files: RepoFileSummary[], root: string): FileTreeNode[] {
+  const rootNode: FileTreeNode = {
+    id: root,
+    name: root.split("/").pop() || root,
+    path: root,
+    kind: "directory",
+    children: []
+  };
+
+  for (const file of files) {
+    const relativePath = file.path.startsWith(`${root}/`)
+      ? file.path.slice(root.length + 1)
+      : file.path === root
+        ? ""
+        : file.path;
+    if (!relativePath) {
+      continue;
+    }
+
+    const segments = relativePath.split("/").filter(Boolean);
+    let currentNode = rootNode;
+
+    segments.forEach((segment, index) => {
+      const isFile = index === segments.length - 1;
+      const nextPath = `${currentNode.path}/${segment}`;
+      let child = currentNode.children.find(
+        (item) => item.name === segment && item.kind === (isFile ? "file" : "directory")
+      );
+
+      if (!child) {
+        child = {
+          id: nextPath,
+          name: segment,
+          path: nextPath,
+          kind: isFile ? "file" : "directory",
+          children: [],
+          file: isFile ? file : undefined
+        };
+        currentNode.children.push(child);
+        currentNode.children.sort((left, right) => {
+          if (left.kind !== right.kind) {
+            return left.kind === "directory" ? -1 : 1;
+          }
+          return left.name.localeCompare(right.name, "zh-CN");
+        });
+      }
+
+      currentNode = child;
+    });
+  }
+
+  return rootNode.children;
+}
+
+function FileTree(props: {
+  nodes: FileTreeNode[];
+  selectedPath: string;
+  onSelect: (path: string) => void;
+  level?: number;
+}): JSX.Element {
+  const level = props.level ?? 0;
+
+  return (
+    <div className={`file-tree file-tree--level-${level}`}>
+      {props.nodes.map((node) =>
+        node.kind === "directory" ? (
+          <details key={node.id} className="file-tree-folder" open>
+            <summary className="file-tree-folder__summary">
+              <span className="file-tree-folder__icon">▾</span>
+              <span className="file-tree-folder__name">{node.name}</span>
+            </summary>
+            <FileTree
+              nodes={node.children}
+              selectedPath={props.selectedPath}
+              onSelect={props.onSelect}
+              level={level + 1}
+            />
+          </details>
+        ) : (
+          <button
+            key={node.id}
+            className={`file-tree-file ${props.selectedPath === node.path ? "file-tree-file--active" : ""}`}
+            onClick={() => props.onSelect(node.path)}
+            style={{ paddingLeft: `${16 + level * 18}px` }}
+          >
+            <span className="file-tree-file__name">{node.name}</span>
+            <span className="file-tree-file__meta">
+              {node.file ? `${formatSize(node.file.size)} · ${formatTime(node.file.modifiedAt)}` : ""}
+            </span>
+          </button>
+        )
+      )}
+    </div>
+  );
 }
 
 function DiffView(props: {
@@ -371,6 +476,7 @@ export default function App(): JSX.Element {
         (file) => file.path === activeEnvironment.root || file.path.startsWith(`${activeEnvironment.root}/`)
       )
     : files;
+  const fileTree = activeEnvironment ? buildFileTree(visibleFiles, activeEnvironment.root) : [];
   const repoReady = bootstrap?.repoStatus.ready ?? false;
 
   return (
@@ -469,18 +575,7 @@ export default function App(): JSX.Element {
             {visibleFiles.length === 0 ? (
               <div className="empty-block">仓库中还没有可展示的文本文件</div>
             ) : (
-              visibleFiles.map((file) => (
-                <button
-                  key={file.path}
-                  className={`file-item ${selectedPath === file.path ? "file-item--active" : ""}`}
-                  onClick={() => setSelectedPath(file.path)}
-                >
-                  <span className="file-path">{file.path}</span>
-                  <span className="file-meta">
-                    {formatSize(file.size)} · {formatTime(file.modifiedAt)}
-                  </span>
-                </button>
-              ))
+              <FileTree nodes={fileTree} selectedPath={selectedPath} onSelect={setSelectedPath} />
             )}
           </div>
         </aside>
