@@ -1,0 +1,33 @@
+{
+  "server": {
+    "port": 8090
+  },
+  "repo": {
+    "localPath": "./data/repo",
+    "remoteUrl": "https://example.com/your/repository.git",
+    "branch": "main",
+    "defaultFile": "dev/app.yaml",
+    "visibleRoots": ["dev", "sit", "uat", "prod"],
+    "allowedExtensions": [
+      ".json",
+      ".yaml",
+      ".yml",
+      ".toml",
+      ".ini",
+      ".conf",
+      ".properties",
+      ".env",
+      ".xml",
+      ".txt",
+      ".md",
+      ".js",
+      ".ts",
+      ".tsx",
+      ".css",
+      ".scss",
+      ".html",
+      ".sh"
+    ],
+    "cloneOnStart": true
+  }
+}

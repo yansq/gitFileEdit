@@ -1,0 +1,12 @@
+services:
+  git-file-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./data:/app/data
+    environment:
+      PORT: "8090"
+    restart: unless-stopped

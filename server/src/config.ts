@@ -1,0 +1,126 @@
+import path from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import type { AppConfig, GitSettingsSummary, RuntimeState } from "./types";
+
+export const PROJECT_ROOT = path.resolve(__dirname, "../..");
+const APP_CONFIG_PATH = path.resolve(PROJECT_ROOT, "data/app.config.json");
+const RUNTIME_STATE_PATH = path.resolve(PROJECT_ROOT, "data/runtime.json");
+
+const DEFAULT_APP_CONFIG: AppConfig = {
+  server: {
+    port: 8090
+  },
+  repo: {
+    localPath: "./data/repo",
+    remoteUrl: "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
+    branch: "main",
+    defaultFile: "dev/app.yaml",
+    visibleRoots: ["dev", "sit", "uat", "prod"],
+    allowedExtensions: [
+      ".json",
+      ".yaml",
+      ".yml",
+      ".toml",
+      ".ini",
+      ".conf",
+      ".properties",
+      ".env",
+      ".xml",
+      ".txt",
+      ".md"
+    ],
+    cloneOnStart: true
+  }
+};
+
+const DEFAULT_RUNTIME_STATE: RuntimeState = {
+  git: {
+    username: "",
+    email: "",
+    password: "",
+    defaultCommitMessage: "chore: update file via web console"
+  },
+  lastSyncedAt: null
+};
+
+async function ensureParent(filePath: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+}
+
+async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw) as T;
+  } catch {
+    await ensureParent(filePath);
+    await writeFile(filePath, JSON.stringify(fallback, null, 2), "utf8");
+    return fallback;
+  }
+}
+
+export async function loadAppConfig(): Promise<AppConfig> {
+  return readJsonFile(APP_CONFIG_PATH, DEFAULT_APP_CONFIG);
+}
+
+export async function loadRuntimeState(): Promise<RuntimeState> {
+  return readJsonFile(RUNTIME_STATE_PATH, DEFAULT_RUNTIME_STATE);
+}
+
+export async function saveRuntimeState(state: RuntimeState): Promise<RuntimeState> {
+  await ensureParent(RUNTIME_STATE_PATH);
+  await writeFile(RUNTIME_STATE_PATH, JSON.stringify(state, null, 2), "utf8");
+  return state;
+}
+
+export async function updateRuntimeGitSettings(input: {
+  username?: string;
+  email?: string;
+  password?: string;
+  defaultCommitMessage?: string;
+  clearPassword?: boolean;
+}): Promise<RuntimeState> {
+  const current = await loadRuntimeState();
+  const next: RuntimeState = {
+    ...current,
+    git: {
+      ...current.git,
+      username: input.username ?? current.git.username,
+      email: input.email ?? current.git.email,
+      defaultCommitMessage:
+        input.defaultCommitMessage ?? current.git.defaultCommitMessage,
+      password: input.clearPassword
+        ? ""
+        : input.password ?? current.git.password
+    }
+  };
+  return saveRuntimeState(next);
+}
+
+export async function markLastSyncedAt(timestamp: string): Promise<RuntimeState> {
+  const current = await loadRuntimeState();
+  current.lastSyncedAt = timestamp;
+  return saveRuntimeState(current);
+}
+
+export function resolveRepoPath(config: AppConfig): string {
+  return path.resolve(PROJECT_ROOT, config.repo.localPath);
+}
+
+export function normalizeVisibleRoots(config: AppConfig): string[] {
+  const rawRoots = config.repo.visibleRoots?.length
+    ? config.repo.visibleRoots
+    : ["dev", "sit", "uat", "prod"];
+
+  return rawRoots
+    .map((item) => item.trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+}
+
+export function toGitSettingsSummary(state: RuntimeState): GitSettingsSummary {
+  return {
+    username: state.git.username,
+    email: state.git.email,
+    defaultCommitMessage: state.git.defaultCommitMessage,
+    hasPassword: Boolean(state.git.password)
+  };
+}
