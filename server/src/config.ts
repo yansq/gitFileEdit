@@ -37,7 +37,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
     localPath: "./data/repo",
     remoteUrl: "http://12.99.223.130:30005/enterprise/LMA/aifp-config-tob.git",
     branch: "main",
-    defaultFile: "dev/app.yaml",
+    defaultFile: `${DEFAULT_CONFIG_ROOT}/dev/app.yaml`,
     configRoot: DEFAULT_CONFIG_ROOT,
     allowedExtensions: [
       ".json",
