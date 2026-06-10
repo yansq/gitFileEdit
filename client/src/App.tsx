@@ -370,6 +370,7 @@ export default function App(): JSX.Element {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
   const [selectedNamespace, setSelectedNamespace] = useState<string>("");
+  const [fileQuery, setFileQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
   const [editorContent, setEditorContent] = useState("");
@@ -649,16 +650,29 @@ export default function App(): JSX.Element {
           (file) => getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id) !== null
         )
       : environmentFiles;
+  const normalizedFileQuery = fileQuery.trim().toLocaleLowerCase();
+  const filteredVisibleFiles = normalizedFileQuery
+    ? visibleFiles.filter((file) => {
+        const relativePath =
+          activeEnvironment && activeNamespace
+            ? getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id)
+            : activeEnvironment
+              ? getPathWithinRoot(file.path, activeEnvironment.root)
+              : file.path;
+        const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
+        return searchTarget.includes(normalizedFileQuery);
+      })
+    : visibleFiles;
   const fileTree =
     activeEnvironment && activeNamespace
       ? buildFileTree(
-          visibleFiles,
+          filteredVisibleFiles,
           (file) => getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id),
           `${activeEnvironment.root}/${activeNamespace.id}`
         )
       : activeEnvironment
         ? buildFileTree(
-            environmentFiles,
+            filteredVisibleFiles,
             (file) => getPathWithinRoot(file.path, activeEnvironment.root),
             activeEnvironment.root
           )
@@ -831,9 +845,20 @@ export default function App(): JSX.Element {
             <div className="notice notice--error">{bootstrap.repoStatus.lastError}</div>
           ) : null}
 
+          <label className="form-row">
+            <span>文件检索</span>
+            <input
+              value={fileQuery}
+              onChange={(event) => setFileQuery(event.target.value)}
+              placeholder="按文件名或路径检索"
+            />
+          </label>
+
           <div className="file-list">
             {visibleFiles.length === 0 ? (
               <div className="empty-block">仓库中还没有可展示的文本文件</div>
+            ) : filteredVisibleFiles.length === 0 ? (
+              <div className="empty-block">没有匹配当前检索条件的文件</div>
             ) : (
               <FileTree nodes={fileTree} selectedPath={selectedPath} onSelect={setSelectedPath} />
             )}

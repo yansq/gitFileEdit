@@ -76,6 +76,23 @@ function buildAuthenticatedRemoteUrl(
   return remoteUrl;
 }
 
+function getConfiguredRepoAuth(config: AppConfig): {
+  username?: string;
+  password?: string;
+} {
+  const username = config.repo.auth.username.trim();
+  const password = config.repo.auth.password.trim();
+
+  return {
+    username: username || undefined,
+    password: password || undefined
+  };
+}
+
+function getAuthenticatedRepoUrl(config: AppConfig): string {
+  return buildAuthenticatedRemoteUrl(config.repo.remoteUrl, getConfiguredRepoAuth(config));
+}
+
 function formatGitError(error: unknown): Error {
   const candidate = error as {
     stdout?: string;
@@ -198,14 +215,16 @@ export async function syncRepo(
   _runtime: RuntimeState
 ): Promise<void> {
   const repoPath = resolveRepoPath(config);
-  const remoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, config.repo.auth);
+  const remoteUrl = getAuthenticatedRepoUrl(config);
+  const auth = getConfiguredRepoAuth(config);
   await mkdir(path.dirname(repoPath), { recursive: true });
 
   if (!(await repoExists(repoPath))) {
     logRepoDebug("syncRepo.clone.start", {
       repoPath,
       branch: config.repo.branch,
-      remoteUrl: config.repo.remoteUrl
+      remoteUrl: config.repo.remoteUrl,
+      username: auth.username || null
     });
     await runGit(
       [
@@ -228,7 +247,8 @@ export async function syncRepo(
   logRepoDebug("syncRepo.pull.start", {
     repoPath,
     branch: config.repo.branch,
-    remoteUrl: config.repo.remoteUrl
+    remoteUrl: config.repo.remoteUrl,
+    username: auth.username || null
   });
   await runGit(["pull", "--rebase", remoteUrl, config.repo.branch], {
     cwd: repoPath
@@ -434,9 +454,14 @@ export async function commitAndPushFile(
     throw new Error("当前文件没有可提交的变更");
   }
 
-  const pushRemoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, {
-    username: config.repo.auth.username,
-    password: config.repo.auth.password
+  const auth = getConfiguredRepoAuth(config);
+  const pushRemoteUrl = getAuthenticatedRepoUrl(config);
+
+  logRepoDebug("commitAndPushFile.push.start", {
+    repoPath,
+    branch: config.repo.branch,
+    path: repoRelativePath,
+    username: auth.username || null
   });
 
   await runGit(["add", "--", repoRelativePath], { cwd: repoPath });
