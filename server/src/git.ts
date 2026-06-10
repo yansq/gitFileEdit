@@ -93,6 +93,36 @@ function getAuthenticatedRepoUrl(config: AppConfig): string {
   return buildAuthenticatedRemoteUrl(config.repo.remoteUrl, getConfiguredRepoAuth(config));
 }
 
+function getRemoteUrlSummary(remoteUrl: string): {
+  host: string | null;
+  username: string | null;
+} {
+  try {
+    const url = new URL(remoteUrl);
+    return {
+      host: url.host || null,
+      username: url.username || null
+    };
+  } catch {
+    return {
+      host: null,
+      username: null
+    };
+  }
+}
+
+function buildGitArgsWithManagedCredentials(args: string[]): string[] {
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.askPass=",
+    "-c",
+    "credential.interactive=never",
+    ...args
+  ];
+}
+
 function formatGitError(error: unknown): Error {
   const candidate = error as {
     stdout?: string;
@@ -217,6 +247,7 @@ export async function syncRepo(
   const repoPath = resolveRepoPath(config);
   const remoteUrl = getAuthenticatedRepoUrl(config);
   const auth = getConfiguredRepoAuth(config);
+  const remoteUrlSummary = getRemoteUrlSummary(remoteUrl);
   await mkdir(path.dirname(repoPath), { recursive: true });
 
   if (!(await repoExists(repoPath))) {
@@ -224,17 +255,19 @@ export async function syncRepo(
       repoPath,
       branch: config.repo.branch,
       remoteUrl: config.repo.remoteUrl,
-      username: auth.username || null
+      username: auth.username || null,
+      resolvedRemoteHost: remoteUrlSummary.host,
+      resolvedRemoteUsername: remoteUrlSummary.username
     });
     await runGit(
-      [
+      buildGitArgsWithManagedCredentials([
         "clone",
         "--branch",
         config.repo.branch,
         "--single-branch",
         remoteUrl,
         repoPath
-      ],
+      ]),
       { cwd: path.dirname(repoPath) }
     );
     logRepoDebug("syncRepo.clone.done", {
@@ -248,11 +281,21 @@ export async function syncRepo(
     repoPath,
     branch: config.repo.branch,
     remoteUrl: config.repo.remoteUrl,
-    username: auth.username || null
+    username: auth.username || null,
+    resolvedRemoteHost: remoteUrlSummary.host,
+    resolvedRemoteUsername: remoteUrlSummary.username
   });
-  await runGit(["pull", "--rebase", remoteUrl, config.repo.branch], {
+  await runGit(
+    buildGitArgsWithManagedCredentials([
+      "pull",
+      "--rebase",
+      remoteUrl,
+      config.repo.branch
+    ]),
+    {
     cwd: repoPath
-  });
+    }
+  );
   logRepoDebug("syncRepo.pull.done", {
     repoPath,
     branch: config.repo.branch
@@ -456,12 +499,15 @@ export async function commitAndPushFile(
 
   const auth = getConfiguredRepoAuth(config);
   const pushRemoteUrl = getAuthenticatedRepoUrl(config);
+  const remoteUrlSummary = getRemoteUrlSummary(pushRemoteUrl);
 
   logRepoDebug("commitAndPushFile.push.start", {
     repoPath,
     branch: config.repo.branch,
     path: repoRelativePath,
-    username: auth.username || null
+    username: auth.username || null,
+    resolvedRemoteHost: remoteUrlSummary.host,
+    resolvedRemoteUsername: remoteUrlSummary.username
   });
 
   await runGit(["add", "--", repoRelativePath], { cwd: repoPath });
@@ -477,11 +523,11 @@ export async function commitAndPushFile(
     { cwd: repoPath }
   );
   await runGit(
-    [
+    buildGitArgsWithManagedCredentials([
       "push",
       pushRemoteUrl,
       `HEAD:${config.repo.branch}`
-    ],
+    ]),
     { cwd: repoPath }
   );
 
