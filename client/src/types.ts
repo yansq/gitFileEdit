@@ -8,7 +8,6 @@ export interface GitSettingsSummary {
   username: string;
   email: string;
   defaultCommitMessage: string;
-  hasPassword: boolean;
 }
 
 export interface RepoStatus {

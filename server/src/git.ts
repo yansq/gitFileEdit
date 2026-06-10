@@ -58,16 +58,19 @@ function normalizeAllowedFilePath(config: AppConfig, repoPath: string, filePath:
 
 function buildAuthenticatedRemoteUrl(
   remoteUrl: string,
-  runtime: RuntimeState
+  auth: {
+    username?: string;
+    password?: string;
+  }
 ): string {
   try {
     const url = new URL(remoteUrl);
     if (url.protocol === "http:" || url.protocol === "https:") {
-      if (runtime.git.username) {
-        url.username = runtime.git.username;
+      if (auth.username) {
+        url.username = auth.username;
       }
-      if (runtime.git.password) {
-        url.password = runtime.git.password;
+      if (auth.password) {
+        url.password = auth.password;
       }
       return url.toString();
     }
@@ -178,10 +181,10 @@ export async function inspectRepo(
 
 export async function syncRepo(
   config: AppConfig,
-  runtime: RuntimeState
+  _runtime: RuntimeState
 ): Promise<void> {
   const repoPath = resolveRepoPath(config);
-  const remoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, runtime);
+  const remoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, config.repo.auth);
   await mkdir(path.dirname(repoPath), { recursive: true });
 
   if (!(await repoExists(repoPath))) {
@@ -384,10 +387,13 @@ export async function commitAndPushFile(
       ...runtime.git,
       username: authorName,
       email: authorEmail,
-      password: input.password?.trim() || runtime.git.password,
       defaultCommitMessage: commitMessage
     }
   };
+  const pushRemoteUrl = buildAuthenticatedRemoteUrl(config.repo.remoteUrl, {
+    username: config.repo.auth.username,
+    password: input.password?.trim() || config.repo.auth.password
+  });
 
   await runGit(["add", "--", repoRelativePath], { cwd: repoPath });
   await runGit(
@@ -408,7 +414,7 @@ export async function commitAndPushFile(
   await runGit(
     [
       "push",
-      buildAuthenticatedRemoteUrl(config.repo.remoteUrl, effectiveRuntime),
+      pushRemoteUrl,
       `HEAD:${config.repo.branch}`
     ],
     { cwd: repoPath }

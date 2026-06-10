@@ -130,10 +130,6 @@ app.post("/api/settings/git", async (request, response, next) => {
     const runtime = await updateRuntimeGitSettings({
       username: typeof request.body.username === "string" ? request.body.username.trim() : undefined,
       email: typeof request.body.email === "string" ? request.body.email.trim() : undefined,
-      password:
-        typeof request.body.password === "string" && request.body.password.trim()
-          ? request.body.password
-          : undefined,
       defaultCommitMessage:
         typeof request.body.defaultCommitMessage === "string"
           ? request.body.defaultCommitMessage.trim()
@@ -195,7 +191,6 @@ app.post("/api/commit", async (request, response, next) => {
     await updateRuntimeGitSettings({
       username,
       email,
-      password,
       defaultCommitMessage: message || undefined
     });
     await markLastSyncedAt(new Date().toISOString());

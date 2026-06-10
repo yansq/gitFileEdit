@@ -220,7 +220,6 @@ export default function App(): JSX.Element {
       body: JSON.stringify({
         username: gitForm.username,
         email: gitForm.email,
-        password: gitForm.password,
         defaultCommitMessage: gitForm.commitMessage
       })
     });
@@ -530,7 +529,7 @@ export default function App(): JSX.Element {
             <span>Git 密码或 Token</span>
             <input
               type="password"
-              placeholder={bootstrap?.gitSettings.hasPassword ? "已保存，留空则保持不变" : "请输入密码或 Token"}
+              placeholder="留空则使用配置文件中的默认仓库密码"
               value={gitForm.password}
               onChange={(event) =>
                 setGitForm((current) => ({
@@ -560,7 +559,7 @@ export default function App(): JSX.Element {
           </button>
 
           <div className="settings-note">
-            配置中的远程地址会在提交后直接推送，页面使用服务端实时事件通知所有在线用户刷新内容。
+            查看和同步仓库使用配置文件中的默认账号密码；这里输入的密码仅在本次提交推送时优先生效。
           </div>
         </aside>
       </div>

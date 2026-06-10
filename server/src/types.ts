@@ -9,6 +9,10 @@ export interface AppConfig {
     defaultFile: string;
     visibleRoots: string[];
     allowedExtensions: string[];
+    auth: {
+      username: string;
+      password: string;
+    };
     cloneOnStart: boolean;
   };
 }
@@ -16,7 +20,6 @@ export interface AppConfig {
 export interface RuntimeGitSettings {
   username: string;
   email: string;
-  password: string;
   defaultCommitMessage: string;
 }
 
@@ -67,5 +70,4 @@ export interface GitSettingsSummary {
   username: string;
   email: string;
   defaultCommitMessage: string;
-  hasPassword: boolean;
 }

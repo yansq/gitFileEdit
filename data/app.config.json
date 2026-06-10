@@ -28,6 +28,10 @@
       ".html",
       ".sh"
     ],
+    "auth": {
+      "username": "151577",
+      "password": "nbcb,111"
+    },
     "cloneOnStart": true
   }
 }

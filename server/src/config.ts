@@ -29,6 +29,10 @@ const DEFAULT_APP_CONFIG: AppConfig = {
       ".txt",
       ".md"
     ],
+    auth: {
+      username: "151577",
+      password: "nbcb,111"
+    },
     cloneOnStart: true
   }
 };
@@ -37,7 +41,6 @@ const DEFAULT_RUNTIME_STATE: RuntimeState = {
   git: {
     username: "",
     email: "",
-    password: "",
     defaultCommitMessage: "chore: update file via web console"
   },
   lastSyncedAt: null
@@ -75,9 +78,7 @@ export async function saveRuntimeState(state: RuntimeState): Promise<RuntimeStat
 export async function updateRuntimeGitSettings(input: {
   username?: string;
   email?: string;
-  password?: string;
   defaultCommitMessage?: string;
-  clearPassword?: boolean;
 }): Promise<RuntimeState> {
   const current = await loadRuntimeState();
   const next: RuntimeState = {
@@ -87,10 +88,7 @@ export async function updateRuntimeGitSettings(input: {
       username: input.username ?? current.git.username,
       email: input.email ?? current.git.email,
       defaultCommitMessage:
-        input.defaultCommitMessage ?? current.git.defaultCommitMessage,
-      password: input.clearPassword
-        ? ""
-        : input.password ?? current.git.password
+        input.defaultCommitMessage ?? current.git.defaultCommitMessage
     }
   };
   return saveRuntimeState(next);
@@ -120,7 +118,6 @@ export function toGitSettingsSummary(state: RuntimeState): GitSettingsSummary {
   return {
     username: state.git.username,
     email: state.git.email,
-    defaultCommitMessage: state.git.defaultCommitMessage,
-    hasPassword: Boolean(state.git.password)
+    defaultCommitMessage: state.git.defaultCommitMessage
   };
 }
