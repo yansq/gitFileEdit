@@ -4,7 +4,7 @@
   },
   "repo": {
     "localPath": "./data/repo",
-    "remoteUrl": "http://12.103.118.210:10880/AI/aifp-config-tob.git",
+    "remoteUrl": "http://12.103.118.207:10880/AI/aifp-config-tob.git",
     "branch": "master",
     "configRoot": "nacos-config/config",
     "allowedExtensions": [

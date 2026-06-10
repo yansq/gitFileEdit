@@ -35,7 +35,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
   },
   repo: {
     localPath: "./data/repo",
-    remoteUrl: "http://12.103.118.210:10880/AI/aifp-config-tob.git",
+    remoteUrl: "http://12.103.118.207:10880/AI/aifp-config-tob.git",
     branch: "main",
     configRoot: DEFAULT_CONFIG_ROOT,
     allowedExtensions: [
