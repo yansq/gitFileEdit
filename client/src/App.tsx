@@ -148,16 +148,21 @@ function FileTree(props: {
       {props.nodes.map((node) =>
         node.kind === "directory" ? (
           <details key={node.id} className="file-tree-folder" open>
-            <summary className="file-tree-folder__summary">
+            <summary
+              className="file-tree-folder__summary"
+              style={{ paddingLeft: `${12 + level * 18}px` }}
+            >
               <span className="file-tree-folder__icon">▾</span>
               <span className="file-tree-folder__name">{node.name}</span>
             </summary>
-            <FileTree
-              nodes={node.children}
-              selectedPath={props.selectedPath}
-              onSelect={props.onSelect}
-              level={level + 1}
-            />
+            <div className="file-tree-folder__children">
+              <FileTree
+                nodes={node.children}
+                selectedPath={props.selectedPath}
+                onSelect={props.onSelect}
+                level={level + 1}
+              />
+            </div>
           </details>
         ) : (
           <button
