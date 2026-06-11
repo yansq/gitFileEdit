@@ -66,6 +66,20 @@ function getConfiguredRepoAuth(config: AppConfig): {
   };
 }
 
+function getGitCommitIdentityArgs(config: AppConfig): string[] {
+  const username = config.repo.auth.username.trim();
+  if (!username) {
+    return [];
+  }
+
+  return [
+    "-c",
+    `user.name=${username}`,
+    "-c",
+    `user.email=${username}@local`
+  ];
+}
+
 function getGitAuthArgs(config: AppConfig): string[] {
   const auth = getConfiguredRepoAuth(config);
   if (!auth.username || !auth.password) {
@@ -501,6 +515,7 @@ export async function commitAndPushFile(
   await runGit(["add", "--", repoRelativePath], { cwd: repoPath });
   await runGit(
     [
+      ...getGitCommitIdentityArgs(config),
       "commit",
       "--no-gpg-sign",
       "-m",
