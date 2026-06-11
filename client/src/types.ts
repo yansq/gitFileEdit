@@ -53,6 +53,7 @@ export interface CommitSnapshot {
 export interface FileDetail {
   path: string;
   content: string;
+  remoteContent: string;
   headContent: string;
   isDirty: boolean;
   modifiedAt: string;

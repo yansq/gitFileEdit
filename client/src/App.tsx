@@ -887,7 +887,7 @@ export default function App(): JSX.Element {
               <div className="surface">
                 <div className="surface-title">最新预览</div>
                 <ContentBlock
-                  content={fileDetail?.content ?? ""}
+                  content={fileDetail?.remoteContent ?? ""}
                   emptyText={loading ? "正在加载..." : "请选择文件"}
                 />
               </div>

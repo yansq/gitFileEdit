@@ -404,6 +404,14 @@ async function readGitFile(
   }
 }
 
+async function readRemoteTrackingFile(
+  repoPath: string,
+  branch: string,
+  repoRelativePath: string
+): Promise<string> {
+  return readGitFile(repoPath, `origin/${branch}`, repoRelativePath);
+}
+
 async function readLastCommitSnapshot(
   repoPath: string,
   repoRelativePath: string
@@ -443,9 +451,10 @@ export async function readFileDetail(
   const repoPath = resolveRepoPath(config);
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
   const absolutePath = path.resolve(repoPath, repoRelativePath);
-  const [content, headContent, statusOutput, fileStats, lastCommit] =
+  const [content, remoteContent, headContent, statusOutput, fileStats, lastCommit] =
     await Promise.all([
       readFile(absolutePath, "utf8"),
+      readRemoteTrackingFile(repoPath, config.repo.branch, repoRelativePath),
       readGitFile(repoPath, "HEAD", repoRelativePath),
       runGit(["status", "--porcelain", "--", repoRelativePath], { cwd: repoPath }).catch(
         () => ""
@@ -457,6 +466,7 @@ export async function readFileDetail(
   return {
     path: repoRelativePath,
     content,
+    remoteContent,
     headContent,
     isDirty: Boolean(statusOutput.trim()),
     modifiedAt: fileStats.mtime.toISOString(),
