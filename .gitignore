@@ -2,3 +2,4 @@ node_modules
 dist
 data/repo
 data/runtime.json
+data/app.config.json
