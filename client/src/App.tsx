@@ -29,6 +29,10 @@ interface NamespaceOption {
   label: string;
 }
 
+function cn(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(" ");
+}
+
 const ROOT_NAMESPACE_ID = "__root__";
 const DEFAULT_NAMESPACE_IDS_BY_ENVIRONMENT: Record<string, string[]> = {
   dev: ["finagent-tob-dev", "finagentservice-tob-dev"],
@@ -36,6 +40,22 @@ const DEFAULT_NAMESPACE_IDS_BY_ENVIRONMENT: Record<string, string[]> = {
   uat: ["finagent-tob-uat", "finagentservice-tob-uat"],
   prod: ["finagent-tob", "finagentservice-tob"]
 };
+
+const panelClass =
+  "rounded-[28px] border border-slate-900/10 bg-white/75 p-5 shadow-[0_20px_50px_rgba(33,51,63,0.08)] backdrop-blur";
+const panelTitleRowClass = "mb-4 flex items-center justify-between gap-3";
+const secondaryButtonClass =
+  "rounded-2xl border-0 bg-[#143138]/[0.08] px-4 py-2.5 text-[#183039] transition duration-200 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0";
+const primaryButtonClass =
+  "rounded-2xl border-0 bg-gradient-to-br from-[#0e6b72] to-[#1e8f6b] px-4 py-2.5 text-white shadow-[0_12px_28px_rgba(18,118,112,0.22)] transition duration-200 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0";
+const formRowClass = "mb-3.5 grid gap-2";
+const formLabelClass = "text-sm font-semibold text-[#223841]";
+const inputClass =
+  "rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 px-3.5 py-3 outline-none";
+const emptyBlockClass =
+  "rounded-[22px] border border-dashed border-[#183039]/15 bg-[#f6f9f7]/85 p-6 text-center text-[#73848a]";
+const codeSurfaceClass =
+  "m-0 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4 font-mono text-[13px] leading-[1.65] whitespace-pre-wrap break-words";
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -282,18 +302,18 @@ function FileTree(props: {
   const level = props.level ?? 0;
 
   return (
-    <div className={`file-tree file-tree--level-${level}`}>
+    <div className="grid gap-1.5">
       {props.nodes.map((node) =>
         node.kind === "directory" ? (
-          <details key={node.id} className="file-tree-folder" open>
+          <details key={node.id} className="grid gap-1.5 open:grid" open>
             <summary
-              className="file-tree-folder__summary"
+              className="flex cursor-pointer items-center gap-2 rounded-2xl bg-[#e8f1f0]/60 px-3 py-2.5 font-semibold text-[#1b2a33]"
               style={{ paddingLeft: `${12 + level * 18}px` }}
             >
-              <span className="file-tree-folder__icon">▾</span>
-              <span className="file-tree-folder__name">{node.name}</span>
+              <span className="text-xs text-[#4d6966]">▾</span>
+              <span className="break-words">{node.name}</span>
             </summary>
-            <div className="file-tree-folder__children">
+            <div className="mt-1.5">
               <FileTree
                 nodes={node.children}
                 selectedPath={props.selectedPath}
@@ -305,12 +325,16 @@ function FileTree(props: {
         ) : (
           <button
             key={node.id}
-            className={`file-tree-file ${props.selectedPath === node.path ? "file-tree-file--active" : ""}`}
+            className={cn(
+              "grid gap-1 rounded-2xl border border-[#183039]/10 bg-white/70 px-3 py-2.5 text-left",
+              props.selectedPath === node.path &&
+                "border-[#188f75]/35 bg-gradient-to-br from-[#127670]/10 to-[#1d8c68]/10"
+            )}
             onClick={() => props.onSelect(node.path)}
             style={{ paddingLeft: `${16 + level * 18}px` }}
           >
-            <span className="file-tree-file__name">{node.name}</span>
-            <span className="file-tree-file__meta">
+            <span className="break-words font-semibold text-[#1b2a33]">{node.name}</span>
+            <span className="text-xs text-[#617278]">
               {node.file ? `${formatSize(node.file.size)} · ${formatTime(node.file.modifiedAt)}` : ""}
             </span>
           </button>
@@ -343,15 +367,24 @@ function DiffView(props: {
 
   const hasChange = rows.some((row) => row.type !== "same");
   if (!hasChange) {
-    return <div className="empty-block">{props.emptyText}</div>;
+    return <div className={emptyBlockClass}>{props.emptyText}</div>;
   }
 
   return (
-    <div className="diff-view">
+    <div className="grid gap-0.5 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4">
       {rows.map((row) => (
-        <div key={row.id} className={`diff-row diff-row--${row.type}`}>
-          <span className="diff-marker">{row.marker}</span>
-          <span className="diff-text">{row.text || " "}</span>
+        <div
+          key={row.id}
+          className={cn(
+            "grid grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-[10px] px-1.5 py-1",
+            row.type === "added" && "bg-[#1d8c68]/10",
+            row.type === "removed" && "bg-[#c94a35]/10"
+          )}
+        >
+          <span className="font-mono text-[#4a5b61]">{row.marker}</span>
+          <span className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.65]">
+            {row.text || " "}
+          </span>
         </div>
       ))}
     </div>
@@ -360,10 +393,10 @@ function DiffView(props: {
 
 function ContentBlock(props: { content: string; emptyText: string }): JSX.Element {
   if (!props.content) {
-    return <div className="empty-block">{props.emptyText}</div>;
+    return <div className={emptyBlockClass}>{props.emptyText}</div>;
   }
 
-  return <pre className="content-block">{props.content}</pre>;
+  return <pre className={cn(codeSurfaceClass, "min-h-[480px]")}>{props.content}</pre>;
 }
 
 export default function App(): JSX.Element {
@@ -680,38 +713,50 @@ export default function App(): JSX.Element {
   const repoReady = bootstrap?.repoStatus.ready ?? false;
 
   return (
-    <div className="app-shell">
-      <header className="hero">
+    <div className="p-4 sm:p-7">
+      <header className="mb-6 flex flex-col items-start justify-between gap-6 xl:flex-row">
         <div>
-          <p className="eyebrow">Git File Console</p>
-          <h1>配置文件在线展示与提交</h1>
-          <p className="hero-text">
+          <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
+            Git File Console
+          </p>
+          <h1 className="m-0 text-[clamp(32px,5vw,48px)] leading-[1.05]">
+            配置文件在线展示与提交
+          </h1>
+          <p className="mt-3.5 max-w-[760px] leading-relaxed text-[#43555d]">
             按环境切换查看配置文件，支持实时刷新、在线修改、提交并推送。
           </p>
         </div>
-        <div className="hero-card">
-          <span className={`status-dot ${repoReady ? "status-dot--ok" : "status-dot--warn"}`} />
+        <div className="flex min-w-[260px] items-center gap-3.5 rounded-[22px] border border-slate-900/10 bg-white/70 px-5 py-4 shadow-[0_24px_60px_rgba(54,77,80,0.1)]">
+          <span
+            className={cn(
+              "inline-block h-3 w-3 rounded-full",
+              repoReady
+                ? "bg-[#1d8c68] shadow-[0_0_0_6px_rgba(29,140,104,0.14)]"
+                : "bg-[#d1842f] shadow-[0_0_0_6px_rgba(209,132,47,0.14)]"
+            )}
+          />
           <div>
             <strong>{repoReady ? "仓库可用" : "仓库未就绪"}</strong>
-            <div className="muted-text">
+            <div className="mt-1.5 text-[#728188]">
               上次同步 {formatTime(bootstrap?.repoStatus.lastSyncedAt ?? null)}
             </div>
           </div>
         </div>
       </header>
 
-      <div className="page-grid">
-        <aside className="panel sidebar">
-          <div className="panel-title-row">
-            <h2>文件列表</h2>
-            <button className="secondary-button" onClick={() => void syncRepository()} disabled={syncing}>
+      <div className="grid gap-[22px] min-[1321px]:grid-cols-[320px_minmax(0,1fr)_320px] min-[961px]:max-[1320px]:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className={cn(panelClass, "min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-auto")}>
+          <div className={panelTitleRowClass}>
+            <h2 className="m-0 text-lg">文件列表</h2>
+            <button className={secondaryButtonClass} onClick={() => void syncRepository()} disabled={syncing}>
               {syncing ? "同步中..." : "同步仓库"}
             </button>
           </div>
 
-          <label className="form-row">
-            <span>当前环境</span>
+          <label className={formRowClass}>
+            <span className={formLabelClass}>当前环境</span>
             <select
+              className={inputClass}
               value={activeEnvironment?.id ?? ""}
               onChange={(event) => {
                 const nextEnvironmentId = event.target.value;
@@ -774,9 +819,10 @@ export default function App(): JSX.Element {
           </label>
 
           {activeEnvironment ? (
-            <label className="form-row">
-              <span>名称</span>
+            <label className={formRowClass}>
+              <span className={formLabelClass}>名称</span>
               <select
+                className={inputClass}
                 value={activeNamespace?.id ?? ""}
                 onChange={(event) => {
                   const nextNamespaceId = event.target.value;
@@ -816,18 +862,18 @@ export default function App(): JSX.Element {
             </label>
           ) : null}
 
-          <div className="repo-meta">
+          <div className="mb-4 grid gap-3 rounded-[20px] bg-[#e8f1f0]/70 px-4 py-3.5">
             <div>
-              <span className="meta-label">远程仓库</span>
-              <span className="meta-value">{bootstrap?.config.remoteUrl || "-"}</span>
+              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">远程仓库</span>
+              <span className="block break-words text-sm text-[#183039]">{bootstrap?.config.remoteUrl || "-"}</span>
             </div>
             <div>
-              <span className="meta-label">分支</span>
-              <span className="meta-value">{bootstrap?.config.branch || "-"}</span>
+              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">分支</span>
+              <span className="block break-words text-sm text-[#183039]">{bootstrap?.config.branch || "-"}</span>
             </div>
             <div>
-              <span className="meta-label">展示目录</span>
-              <span className="meta-value">
+              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
+              <span className="block break-words text-sm text-[#183039]">
                 {activeEnvironment
                   ? activeNamespace && activeNamespace.id !== ROOT_NAMESPACE_ID
                     ? `${activeEnvironment.root}/${activeNamespace.id}`
@@ -836,66 +882,67 @@ export default function App(): JSX.Element {
               </span>
             </div>
             <div>
-              <span className="meta-label">当前 HEAD</span>
-              <span className="meta-value mono">{bootstrap?.repoStatus.head || "-"}</span>
+              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">当前 HEAD</span>
+              <span className="block break-words font-mono text-xs text-[#183039]">{bootstrap?.repoStatus.head || "-"}</span>
             </div>
           </div>
 
           {bootstrap?.repoStatus.lastError ? (
-            <div className="notice notice--error">{bootstrap.repoStatus.lastError}</div>
+            <div className="mb-3.5 rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">{bootstrap.repoStatus.lastError}</div>
           ) : null}
 
-          <label className="form-row">
-            <span>文件检索</span>
+          <label className={formRowClass}>
+            <span className={formLabelClass}>文件检索</span>
             <input
+              className={inputClass}
               value={fileQuery}
               onChange={(event) => setFileQuery(event.target.value)}
               placeholder="按文件名或路径检索"
             />
           </label>
 
-          <div className="file-list">
+          <div className="grid gap-2.5">
             {visibleFiles.length === 0 ? (
-              <div className="empty-block">仓库中还没有可展示的文本文件</div>
+              <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
             ) : filteredVisibleFiles.length === 0 ? (
-              <div className="empty-block">没有匹配当前检索条件的文件</div>
+              <div className={emptyBlockClass}>没有匹配当前检索条件的文件</div>
             ) : (
               <FileTree nodes={fileTree} selectedPath={selectedPath} onSelect={setSelectedPath} />
             )}
           </div>
         </aside>
 
-        <main className="main-column">
-          <section className="panel">
-            <div className="panel-title-row">
-              <h2>{selectedPath || "当前文件"}</h2>
-              <div className="action-row">
-                <button className="secondary-button" onClick={() => void saveCurrentFile()} disabled={!selectedPath || saving}>
+        <main className="grid gap-[22px]">
+          <section className={panelClass}>
+            <div className={panelTitleRowClass}>
+              <h2 className="m-0 text-lg">{selectedPath || "当前文件"}</h2>
+              <div className="flex gap-2.5">
+                <button className={secondaryButtonClass} onClick={() => void saveCurrentFile()} disabled={!selectedPath || saving}>
                   {saving ? "保存中..." : "保存"}
                 </button>
-                <button className="primary-button" onClick={() => void commitAndPush()} disabled={!selectedPath || committing}>
+                <button className={primaryButtonClass} onClick={() => void commitAndPush()} disabled={!selectedPath || committing}>
                   {committing ? "提交中..." : "提交并推送"}
                 </button>
               </div>
             </div>
 
-            {message ? <div className="notice notice--ok">{message}</div> : null}
-            {liveNotice ? <div className="notice notice--live">{liveNotice}</div> : null}
-            {error ? <div className="notice notice--error">{error}</div> : null}
+            {message ? <div className="mb-3.5 rounded-2xl bg-[#1d8c68]/10 px-3.5 py-3 text-sm text-[#12684d]">{message}</div> : null}
+            {liveNotice ? <div className="mb-3.5 rounded-2xl bg-[#2475b2]/10 px-3.5 py-3 text-sm text-[#18527e]">{liveNotice}</div> : null}
+            {error ? <div className="mb-3.5 rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">{error}</div> : null}
 
-            <div className="editor-grid">
-              <div className="surface">
-                <div className="surface-title">最新预览</div>
+            <div className="grid gap-[18px] min-[961px]:grid-cols-2">
+              <div className="grid gap-3">
+                <div className="font-bold text-[#20404a]">最新预览</div>
                 <ContentBlock
                   content={fileDetail?.remoteContent ?? ""}
                   emptyText={loading ? "正在加载..." : "请选择文件"}
                 />
               </div>
 
-              <div className="surface">
-                <div className="surface-title">在线编辑</div>
+              <div className="grid gap-3">
+                <div className="font-bold text-[#20404a]">在线编辑</div>
                 <textarea
-                  className="editor"
+                  className={cn(codeSurfaceClass, "min-h-[480px] w-full resize-y outline-none")}
                   value={editorContent}
                   onChange={(event) => {
                     setEditorContent(event.target.value);
@@ -908,10 +955,10 @@ export default function App(): JSX.Element {
             </div>
           </section>
 
-          <section className="panel">
-            <div className="panel-title-row">
-              <h2>当前工作区与 HEAD 对比</h2>
-              <span className="tag">{fileDetail?.isDirty ? "有未提交修改" : "已和 HEAD 一致"}</span>
+          <section className={panelClass}>
+            <div className={panelTitleRowClass}>
+              <h2 className="m-0 text-lg">当前工作区与 HEAD 对比</h2>
+              <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">{fileDetail?.isDirty ? "有未提交修改" : "已和 HEAD 一致"}</span>
             </div>
             <DiffView
               before={fileDetail?.headContent ?? ""}
@@ -920,21 +967,21 @@ export default function App(): JSX.Element {
             />
           </section>
 
-          <section className="panel">
-            <div className="panel-title-row">
-              <h2>最近一次提交前后对比</h2>
-              <span className="tag">
+          <section className={panelClass}>
+            <div className={panelTitleRowClass}>
+              <h2 className="m-0 text-lg">最近一次提交前后对比</h2>
+              <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
                 {fileDetail?.lastCommit ? fileDetail.lastCommit.message : "暂无提交记录"}
               </span>
             </div>
 
             {fileDetail?.lastCommit ? (
               <>
-                <div className="commit-meta">
+                <div className="mb-3.5 flex flex-wrap gap-x-3.5 gap-y-2.5 text-[13px] text-[#55686f]">
                   <span>{fileDetail.lastCommit.authorName}</span>
                   <span>{fileDetail.lastCommit.authorEmail}</span>
                   <span>{formatTime(fileDetail.lastCommit.committedAt)}</span>
-                  <span className="mono">{fileDetail.lastCommit.hash}</span>
+                  <span className="font-mono text-xs">{fileDetail.lastCommit.hash}</span>
                 </div>
                 <DiffView
                   before={fileDetail.lastCommit.beforeContent}
@@ -943,16 +990,17 @@ export default function App(): JSX.Element {
                 />
               </>
             ) : (
-              <div className="empty-block">当前文件还没有最近提交对比可展示</div>
+              <div className={emptyBlockClass}>当前文件还没有最近提交对比可展示</div>
             )}
           </section>
         </main>
 
-        <aside className="panel settings-column">
-          <h2>提交设置</h2>
-          <label className="form-row">
-            <span>Commit Message 前缀</span>
+        <aside className={cn(panelClass, "min-[1321px]:sticky min-[1321px]:top-5 min-[1321px]:max-h-[calc(100vh-40px)] min-[1321px]:overflow-auto min-[961px]:max-[1320px]:col-span-full")}>
+          <h2 className="m-0 mb-4 text-lg">提交设置</h2>
+          <label className={formRowClass}>
+            <span className={formLabelClass}>Commit Message 前缀</span>
             <input
+              className={inputClass}
               value={gitForm.commitMessagePrefix}
               onChange={(event) =>
                 setGitForm((current) => ({
@@ -963,9 +1011,10 @@ export default function App(): JSX.Element {
             />
           </label>
 
-          <label className="form-row">
-            <span>本次提交说明</span>
+          <label className={formRowClass}>
+            <span className={formLabelClass}>本次提交说明</span>
             <textarea
+              className={inputClass}
               rows={6}
               value={gitForm.commitMessage}
               placeholder={"建议包含：\n提交人：张三\n修改环境：开发环境\n修改内容：调整 xxx 配置为 yyy"}
@@ -978,11 +1027,11 @@ export default function App(): JSX.Element {
             />
           </label>
 
-          <button className="secondary-button full-width" onClick={() => void saveGitSettings()}>
+          <button className={cn(secondaryButtonClass, "w-full")} onClick={() => void saveGitSettings()}>
             保存前缀
           </button>
 
-          <div className="settings-note">
+          <div className="mt-4 rounded-[18px] bg-[#ebf2f8]/70 px-4 py-3.5 leading-relaxed text-[#4a5f68]">
             提交说明建议包含提交人、修改环境、修改内容。这里仅做提醒，不会阻止提交；最终 commit message 前缀始终读取服务端配置。
           </div>
         </aside>
