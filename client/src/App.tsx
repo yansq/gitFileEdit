@@ -441,8 +441,10 @@ export default function App(): JSX.Element {
   const [authChecked, setAuthChecked] = useState(false);
   const [loginForm, setLoginForm] = useState({
     username: "",
-    password: ""
+    password: "",
+    confirmPassword: ""
   });
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [loggingIn, setLoggingIn] = useState(false);
 
   async function refreshBootstrap(preferredPath?: string, preserveForm = true): Promise<void> {
@@ -708,14 +710,25 @@ export default function App(): JSX.Element {
     setMessage(null);
 
     try {
-      const payload = await requestJson<AuthResponse>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(loginForm)
-      });
+      if (authMode === "register" && loginForm.password !== loginForm.confirmPassword) {
+        throw new Error("两次输入的密码不一致");
+      }
+
+      const payload = await requestJson<AuthResponse>(
+        authMode === "register" ? "/api/auth/register" : "/api/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            username: loginForm.username,
+            password: loginForm.password
+          })
+        }
+      );
       setAuthUser(payload.user);
       setLoginForm({
         username: "",
-        password: ""
+        password: "",
+        confirmPassword: ""
       });
       await refreshBootstrap(undefined, false);
     } catch (loginError) {
@@ -790,6 +803,7 @@ export default function App(): JSX.Element {
   }
 
   if (!authUser) {
+    const isRegistering = authMode === "register";
     return (
       <div className="grid min-h-screen place-items-center p-4">
         <form
@@ -799,7 +813,9 @@ export default function App(): JSX.Element {
           <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
             Git File Console
           </p>
-          <h1 className="m-0 text-3xl leading-tight">登录后修改配置</h1>
+          <h1 className="m-0 text-3xl leading-tight">
+            {isRegistering ? "注册账号" : "登录后修改配置"}
+          </h1>
           <div className="mt-6 grid gap-4">
             <label className={formRowClass}>
               <span className={formLabelClass}>账号</span>
@@ -820,7 +836,7 @@ export default function App(): JSX.Element {
               <input
                 className={inputClass}
                 type="password"
-                autoComplete="current-password"
+                autoComplete={isRegistering ? "new-password" : "current-password"}
                 value={loginForm.password}
                 onChange={(event) =>
                   setLoginForm((current) => ({
@@ -830,6 +846,23 @@ export default function App(): JSX.Element {
                 }
               />
             </label>
+            {isRegistering ? (
+              <label className={formRowClass}>
+                <span className={formLabelClass}>确认密码</span>
+                <input
+                  className={inputClass}
+                  type="password"
+                  autoComplete="new-password"
+                  value={loginForm.confirmPassword}
+                  onChange={(event) =>
+                    setLoginForm((current) => ({
+                      ...current,
+                      confirmPassword: event.target.value
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
             {error ? (
               <div className="rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">
                 {error}
@@ -837,9 +870,35 @@ export default function App(): JSX.Element {
             ) : null}
             <button
               className={primaryButtonClass}
-              disabled={!loginForm.username || !loginForm.password || loggingIn}
+              disabled={
+                !loginForm.username ||
+                !loginForm.password ||
+                (isRegistering && !loginForm.confirmPassword) ||
+                loggingIn
+              }
             >
-              {loggingIn ? "登录中..." : "登录"}
+              {loggingIn
+                ? isRegistering
+                  ? "注册中..."
+                  : "登录中..."
+                : isRegistering
+                  ? "注册并登录"
+                  : "登录"}
+            </button>
+            <button
+              className={secondaryButtonClass}
+              type="button"
+              onClick={() => {
+                setAuthMode((current) => (current === "login" ? "register" : "login"));
+                setError(null);
+                setLoginForm({
+                  username: "",
+                  password: "",
+                  confirmPassword: ""
+                });
+              }}
+            >
+              {isRegistering ? "已有账号，去登录" : "没有账号，去注册"}
             </button>
           </div>
         </form>

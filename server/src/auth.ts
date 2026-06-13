@@ -162,6 +162,27 @@ function verifyPassword(password: string, passwordHash: string): boolean {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("base64url");
+  const key = crypto.scryptSync(password, salt, 32).toString("base64url");
+  return `scrypt$${salt}$${key}`;
+}
+
+async function saveUsers(users: StoredUser[]): Promise<void> {
+  await mkdir(path.dirname(usersPath), { recursive: true });
+  await writeFile(
+    usersPath,
+    `${JSON.stringify(
+      {
+        users
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+}
+
 function getFailureKey(request: Request, username: string): string {
   return `${request.ip}:${username.toLowerCase()}`;
 }
@@ -220,6 +241,21 @@ async function getRequestUser(request: Request): Promise<AuthUser | null> {
   return user;
 }
 
+function startSession(response: Response, userId: string): void {
+  const sessionId = crypto.randomBytes(32).toString("base64url");
+  sessions.set(sessionId, {
+    userId,
+    expiresAt: Date.now() + SESSION_TTL_MS
+  });
+  setSessionCookie(response, signSessionId(sessionId));
+}
+
+function toAuthUser(user: StoredUser): AuthUser {
+  return {
+    id: user.id
+  };
+}
+
 export async function login(request: Request, response: Response): Promise<void> {
   const username = String(request.body.username ?? "").trim();
   const password = String(request.body.password ?? "");
@@ -244,16 +280,43 @@ export async function login(request: Request, response: Response): Promise<void>
   }
 
   clearLoginFailure(request, username);
-  const sessionId = crypto.randomBytes(32).toString("base64url");
-  sessions.set(sessionId, {
-    userId: user.id,
-    expiresAt: Date.now() + SESSION_TTL_MS
-  });
-  setSessionCookie(response, signSessionId(sessionId));
+  startSession(response, user.id);
   response.json({
-    user: {
-      id: user.id
-    }
+    user: toAuthUser(user)
+  });
+}
+
+export async function register(request: Request, response: Response): Promise<void> {
+  const username = String(request.body.username ?? "").trim();
+  const password = String(request.body.password ?? "");
+  if (!username || !password) {
+    response.status(400).json({ error: "请输入账号和密码" });
+    return;
+  }
+  if (username.length > 40) {
+    response.status(400).json({ error: "账号不能超过 40 个字符" });
+    return;
+  }
+  if (password.length < 6) {
+    response.status(400).json({ error: "密码至少 6 位" });
+    return;
+  }
+
+  const users = await loadUsers();
+  if (users.some((item) => item.id === username)) {
+    response.status(409).json({ error: "账号已存在" });
+    return;
+  }
+
+  const user: StoredUser = {
+    id: username,
+    passwordHash: hashPassword(password)
+  };
+  users.push(user);
+  await saveUsers(users);
+  startSession(response, user.id);
+  response.status(201).json({
+    user: toAuthUser(user)
   });
 }
 

@@ -1,6 +1,6 @@
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { login, logout, me, requireAuth } from "./auth";
+import { login, logout, me, register, requireAuth } from "./auth";
 import {
   getEnvironmentOptions,
   loadAppConfig,
@@ -105,6 +105,14 @@ async function initializeRepoOnStartup(): Promise<void> {
 app.post("/api/auth/login", async (request, response, next) => {
   try {
     await login(request, response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/register", async (request, response, next) => {
+  try {
+    await register(request, response);
   } catch (error) {
     next(error);
   }
