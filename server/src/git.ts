@@ -346,24 +346,11 @@ export async function syncRepo(
       cwd: repoPath
     }
   );
-  await runGit(
-    ["checkout", config.repo.branch],
-    {
-      cwd: repoPath
-    }
-  ).catch(() => "");
-  await runGit(
-    ["merge", "--ff-only", remoteTrackingRef],
-    {
-      cwd: repoPath
-    }
-  ).catch((error) => {
-    logRepoDebug("syncRepo.merge.skip", {
-      repoPath,
-      branch: config.repo.branch,
-      error: (error as Error).message
-    });
-    return "";
+  await runGit(["checkout", config.repo.branch], {
+    cwd: repoPath
+  });
+  await runGit(["merge", "--ff-only", remoteTrackingRef], {
+    cwd: repoPath
   });
   logRepoDebug("syncRepo.pull.done", {
     repoPath,
