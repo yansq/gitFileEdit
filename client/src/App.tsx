@@ -24,11 +24,6 @@ interface FileTreeNode {
   file?: RepoFileSummary;
 }
 
-interface NamespaceOption {
-  id: string;
-  label: string;
-}
-
 interface AuthResponse {
   user: AuthUser;
 }
@@ -36,14 +31,6 @@ interface AuthResponse {
 function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
-
-const ROOT_NAMESPACE_ID = "__root__";
-const DEFAULT_NAMESPACE_IDS_BY_ENVIRONMENT: Record<string, string[]> = {
-  dev: ["finagent-tob-dev", "finagentservice-tob-dev"],
-  sit: ["finagent-tob", "finagentservice-tob"],
-  uat: ["finagent-tob-uat", "finagentservice-tob-uat"],
-  prod: ["finagent-tob", "finagentservice-tob"]
-};
 
 const panelClass =
   "rounded-[28px] border border-slate-900/10 bg-white/75 p-5 shadow-[0_20px_50px_rgba(33,51,63,0.08)] backdrop-blur";
@@ -140,100 +127,6 @@ function getPathWithinRoot(filePath: string, root: string): string | null {
   return null;
 }
 
-function getNamespaceIdForFile(filePath: string, environmentRoot: string): string | null {
-  const relativePath = getPathWithinRoot(filePath, environmentRoot);
-  if (relativePath === null) {
-    return null;
-  }
-
-  const segments = splitPathSegments(relativePath);
-  if (segments.length <= 1) {
-    return ROOT_NAMESPACE_ID;
-  }
-
-  return segments[0];
-}
-
-function getDefaultNamespaceOptions(environmentId: string): NamespaceOption[] {
-  return (DEFAULT_NAMESPACE_IDS_BY_ENVIRONMENT[environmentId] ?? []).map((item) => ({
-    id: item,
-    label: item
-  }));
-}
-
-function scanNamespaceOptions(
-  files: RepoFileSummary[],
-  environmentRoot: string
-): NamespaceOption[] {
-  const namespaces = new Map<string, NamespaceOption>();
-
-  for (const file of files) {
-    const namespaceId = getNamespaceIdForFile(file.path, environmentRoot);
-    if (!namespaceId) {
-      continue;
-    }
-
-    if (!namespaces.has(namespaceId)) {
-      namespaces.set(namespaceId, {
-        id: namespaceId,
-        label: namespaceId === ROOT_NAMESPACE_ID ? "根目录" : namespaceId
-      });
-    }
-  }
-
-  return Array.from(namespaces.values()).sort((left, right) => {
-    if (left.id === ROOT_NAMESPACE_ID) {
-      return -1;
-    }
-    if (right.id === ROOT_NAMESPACE_ID) {
-      return 1;
-    }
-    return left.label.localeCompare(right.label, "zh-CN");
-  });
-}
-
-function getNamespaceOptions(
-  environmentId: string,
-  files: RepoFileSummary[],
-  environmentRoot: string
-): NamespaceOption[] {
-  const merged = new Map<string, NamespaceOption>();
-
-  for (const item of getDefaultNamespaceOptions(environmentId)) {
-    merged.set(item.id, item);
-  }
-
-  for (const item of scanNamespaceOptions(files, environmentRoot)) {
-    if (!merged.has(item.id)) {
-      merged.set(item.id, item);
-    }
-  }
-
-  return Array.from(merged.values());
-}
-
-function getPathWithinNamespace(
-  filePath: string,
-  environmentRoot: string,
-  namespaceId: string
-): string | null {
-  const relativePath = getPathWithinRoot(filePath, environmentRoot);
-  if (relativePath === null) {
-    return null;
-  }
-
-  const segments = splitPathSegments(relativePath);
-  if (namespaceId === ROOT_NAMESPACE_ID) {
-    return segments.length <= 1 ? relativePath : null;
-  }
-
-  if (segments.length <= 1 || segments[0] !== namespaceId) {
-    return null;
-  }
-
-  return segments.slice(1).join("/");
-}
-
 function replaceEnvironmentRoot(
   filePath: string,
   environments: RepoEnvironmentOption[],
@@ -313,51 +206,131 @@ function FileTree(props: {
   nodes: FileTreeNode[];
   selectedPath: string;
   onSelect: (path: string) => void;
+  forceOpen?: boolean;
   level?: number;
 }): JSX.Element {
   const level = props.level ?? 0;
 
   return (
-    <div className="grid gap-1.5">
-      {props.nodes.map((node) =>
-        node.kind === "directory" ? (
-          <details key={node.id} className="grid gap-1.5 open:grid" open>
-            <summary
-              className="flex cursor-pointer items-center gap-2 rounded-2xl bg-[#e8f1f0]/60 px-3 py-2.5 font-semibold text-[#1b2a33]"
-              style={{ paddingLeft: `${12 + level * 18}px` }}
-            >
-              <span className="text-xs text-[#4d6966]">▾</span>
-              <span className="break-words">{node.name}</span>
-            </summary>
-            <div className="mt-1.5">
-              <FileTree
-                nodes={node.children}
-                selectedPath={props.selectedPath}
-                onSelect={props.onSelect}
-                level={level + 1}
-              />
-            </div>
-          </details>
-        ) : (
-          <button
-            key={node.id}
-            className={cn(
-              "grid gap-1 rounded-2xl border border-[#183039]/10 bg-white/70 px-3 py-2.5 text-left",
-              props.selectedPath === node.path &&
-                "border-[#188f75]/35 bg-gradient-to-br from-[#127670]/10 to-[#1d8c68]/10"
-            )}
-            onClick={() => props.onSelect(node.path)}
-            style={{ paddingLeft: `${16 + level * 18}px` }}
-          >
-            <span className="break-words font-semibold text-[#1b2a33]">{node.name}</span>
-            <span className="text-xs text-[#617278]">
-              {node.file ? `${formatSize(node.file.size)} · ${formatTime(node.file.modifiedAt)}` : ""}
-            </span>
-          </button>
-        )
-      )}
+    <div className="grid gap-0.5">
+      {props.nodes.map((node) => (
+        <FileTreeRow
+          key={node.id}
+          node={node}
+          selectedPath={props.selectedPath}
+          onSelect={props.onSelect}
+          level={level}
+          forceOpen={props.forceOpen ?? false}
+        />
+      ))}
     </div>
   );
+}
+
+function FileTreeRow(props: {
+  node: FileTreeNode;
+  selectedPath: string;
+  onSelect: (path: string) => void;
+  level: number;
+  forceOpen: boolean;
+}): JSX.Element {
+  const containsSelected = nodeContainsPath(props.node, props.selectedPath);
+  const [open, setOpen] = useState(true);
+  const isOpen = props.forceOpen || containsSelected || open;
+  const indent = 6 + props.level * 10;
+
+  if (props.node.kind === "directory") {
+    return (
+      <div>
+        <button
+          type="button"
+          className={cn(
+            "flex min-h-[34px] w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] font-semibold text-[#24292f] transition hover:text-[#0f5e58]",
+            containsSelected && "text-[#111827]"
+          )}
+          onClick={() => setOpen((current) => !current)}
+          style={{ paddingLeft: `${indent}px` }}
+        >
+          <span
+            className={cn(
+              "w-6 shrink-0 text-center text-3xl font-light leading-none text-[#8a8f94] transition-transform",
+              isOpen && "rotate-90 text-[#24292f]"
+            )}
+          >
+            ›
+          </span>
+          <span className="min-w-0 flex-1 truncate">{props.node.name}</span>
+        </button>
+        {isOpen ? (
+          <FileTree
+            nodes={props.node.children}
+            selectedPath={props.selectedPath}
+            onSelect={props.onSelect}
+            level={props.level + 1}
+            forceOpen={props.forceOpen}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "group grid min-h-[34px] w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
+        props.selectedPath === props.node.path &&
+          "font-semibold text-[#111827]"
+      )}
+      onClick={() => props.onSelect(props.node.path)}
+      style={{ paddingLeft: `${indent + 18}px` }}
+      title={props.node.path}
+    >
+      <FileTypeIcon fileName={props.node.name} />
+      <span className="min-w-0 truncate">{props.node.name}</span>
+      <span className="hidden text-xs font-normal text-[#7a8b91] group-hover:inline">
+        {props.node.file ? formatSize(props.node.file.size) : ""}
+      </span>
+    </button>
+  );
+}
+
+function nodeContainsPath(node: FileTreeNode, pathValue: string): boolean {
+  if (node.kind === "file") {
+    return node.path === pathValue;
+  }
+  return node.children.some((child) => nodeContainsPath(child, pathValue));
+}
+
+function FileTypeIcon(props: { fileName: string }): JSX.Element {
+  const name = props.fileName.toLocaleLowerCase();
+
+  if (name.endsWith(".md")) {
+    return <span className="text-center text-sm font-black text-[#20a455]">M↓</span>;
+  }
+  if (name === "dockerfile" || name.includes("compose") || name.endsWith(".yml") || name.endsWith(".yaml")) {
+    return <span className="text-center text-lg leading-none text-[#238bd7]">◆</span>;
+  }
+  if (name.endsWith(".html")) {
+    return <span className="rounded-md bg-[#f4dfcb] text-center text-sm font-bold text-[#d9792b]">#</span>;
+  }
+  if (name.endsWith(".json")) {
+    return <span className="text-center text-lg leading-none text-[#e47a22]">{"{}"}</span>;
+  }
+  if (name.endsWith(".cjs") || name.endsWith(".js")) {
+    return <span className="text-center text-lg leading-none text-[#df3b4a]">◎</span>;
+  }
+  if (name.endsWith(".ts") || name.endsWith(".tsx")) {
+    return <span className="text-center text-lg leading-none text-[#a83ac6]">ϟ</span>;
+  }
+  if (name.endsWith(".css") || name.endsWith(".scss")) {
+    return <span className="text-center text-lg leading-none text-[#20a9c8]">~</span>;
+  }
+  if (name.endsWith(".properties") || name.endsWith(".conf") || name.endsWith(".ini") || name.endsWith(".env")) {
+    return <span className="rounded-md bg-[#edf1f3] text-center text-sm font-bold text-[#65727a]">.</span>;
+  }
+
+  return <span className="text-center text-lg leading-none text-[#9aa3aa]">•</span>;
 }
 
 function DiffView(props: {
@@ -418,7 +391,6 @@ function ContentBlock(props: { content: string; emptyText: string }): JSX.Elemen
 export default function App(): JSX.Element {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
-  const [selectedNamespace, setSelectedNamespace] = useState<string>("");
   const [fileQuery, setFileQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
@@ -457,20 +429,6 @@ export default function App(): JSX.Element {
         ?.id ||
       environmentOptions[0]?.id ||
       "";
-    const derivedEnvironmentRoot =
-      environmentOptions.find((item) => item.id === derivedEnvironment)?.root ?? "";
-    const derivedNamespace =
-      (nextPath && derivedEnvironmentRoot
-        ? getNamespaceIdForFile(nextPath, derivedEnvironmentRoot)
-        : null) ??
-      ROOT_NAMESPACE_ID;
-    const namespaceOptions = derivedEnvironmentRoot
-      ? getNamespaceOptions(
-          derivedEnvironment,
-          data.files.filter((file) => getPathWithinRoot(file.path, derivedEnvironmentRoot) !== null),
-          derivedEnvironmentRoot
-        )
-      : [];
 
     startTransition(() => {
       setBootstrap(data);
@@ -478,13 +436,6 @@ export default function App(): JSX.Element {
         current && environmentOptions.some((item) => item.id === current)
           ? current
           : derivedEnvironment
-      );
-      setSelectedNamespace((current) =>
-        current && namespaceOptions.some((item) => item.id === current)
-          ? current
-          : (namespaceOptions.find((item) => item.id === derivedNamespace)?.id ??
-            namespaceOptions[0]?.id ??
-            "")
       );
       setSelectedPath(nextPath);
       if (!settingsSeeded || !preserveForm) {
@@ -730,44 +681,24 @@ export default function App(): JSX.Element {
   const environmentFiles = activeEnvironment
     ? files.filter((file) => getPathWithinRoot(file.path, activeEnvironment.root) !== null)
     : files;
-  const namespaceOptions = activeEnvironment
-    ? getNamespaceOptions(activeEnvironment.id, environmentFiles, activeEnvironment.root)
-    : [];
-  const activeNamespace =
-    namespaceOptions.find((item) => item.id === selectedNamespace) ?? namespaceOptions[0] ?? null;
-  const visibleFiles =
-    activeEnvironment && activeNamespace
-      ? environmentFiles.filter(
-          (file) => getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id) !== null
-        )
-      : environmentFiles;
+  const visibleFiles = environmentFiles;
   const normalizedFileQuery = fileQuery.trim().toLocaleLowerCase();
   const filteredVisibleFiles = normalizedFileQuery
     ? visibleFiles.filter((file) => {
         const relativePath =
-          activeEnvironment && activeNamespace
-            ? getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id)
-            : activeEnvironment
-              ? getPathWithinRoot(file.path, activeEnvironment.root)
-              : file.path;
+          activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
         const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
         return searchTarget.includes(normalizedFileQuery);
       })
     : visibleFiles;
   const fileTree =
-    activeEnvironment && activeNamespace
+    activeEnvironment
       ? buildFileTree(
           filteredVisibleFiles,
-          (file) => getPathWithinNamespace(file.path, activeEnvironment.root, activeNamespace.id),
-          `${activeEnvironment.root}/${activeNamespace.id}`
+          (file) => getPathWithinRoot(file.path, activeEnvironment.root),
+          activeEnvironment.root
         )
-      : activeEnvironment
-        ? buildFileTree(
-            filteredVisibleFiles,
-            (file) => getPathWithinRoot(file.path, activeEnvironment.root),
-            activeEnvironment.root
-          )
-        : [];
+      : [];
   const repoReady = bootstrap?.repoStatus.ready ?? false;
 
   if (!authChecked || loading) {
@@ -941,31 +872,9 @@ export default function App(): JSX.Element {
                 const nextEnvironment = environmentOptions.find(
                   (item) => item.id === nextEnvironmentId
                 );
-                const nextEnvironmentFiles = nextEnvironment
-                  ? files.filter((file) => getPathWithinRoot(file.path, nextEnvironment.root) !== null)
-                  : [];
-                const nextNamespaceOptions = nextEnvironment
-                  ? getNamespaceOptions(
-                      nextEnvironment.id,
-                      nextEnvironmentFiles,
-                      nextEnvironment.root
-                    )
-                  : [];
                 const replacedPath = selectedPath
                   ? replaceEnvironmentRoot(selectedPath, environmentOptions, nextEnvironmentId)
                   : null;
-                const replacedNamespace =
-                  replacedPath && nextEnvironment
-                    ? getNamespaceIdForFile(replacedPath, nextEnvironment.root)
-                    : null;
-                const nextNamespaceId =
-                  (replacedNamespace &&
-                  nextNamespaceOptions.some((item) => item.id === replacedNamespace)
-                    ? replacedNamespace
-                    : null) ??
-                  nextNamespaceOptions[0]?.id ??
-                  "";
-                setSelectedNamespace(nextNamespaceId);
                 const nextPath = selectedPath
                   ? replacedPath
                   : null;
@@ -978,10 +887,7 @@ export default function App(): JSX.Element {
                   nextEnvironment
                     ? files.find(
                         (file) =>
-                          getPathWithinRoot(file.path, nextEnvironment.root) !== null &&
-                          (!nextNamespaceId ||
-                            getPathWithinNamespace(file.path, nextEnvironment.root, nextNamespaceId) !==
-                              null)
+                          getPathWithinRoot(file.path, nextEnvironment.root) !== null
                       )?.path ?? ""
                     : "";
                 setSelectedPath(fallbackPath);
@@ -994,50 +900,6 @@ export default function App(): JSX.Element {
               ))}
             </select>
           </label>
-
-          {activeEnvironment ? (
-            <label className={formRowClass}>
-              <span className={formLabelClass}>名称</span>
-              <select
-                className={inputClass}
-                value={activeNamespace?.id ?? ""}
-                onChange={(event) => {
-                  const nextNamespaceId = event.target.value;
-                  setSelectedNamespace(nextNamespaceId);
-                  const nextPath =
-                    selectedPath &&
-                    activeEnvironment &&
-                    getPathWithinNamespace(selectedPath, activeEnvironment.root, nextNamespaceId) !==
-                      null
-                      ? selectedPath
-                      : "";
-                  if (nextPath) {
-                    setSelectedPath(nextPath);
-                    return;
-                  }
-
-                  const fallbackPath =
-                    activeEnvironment
-                      ? files.find(
-                          (file) =>
-                            getPathWithinNamespace(
-                              file.path,
-                              activeEnvironment.root,
-                              nextNamespaceId
-                            ) !== null
-                        )?.path ?? ""
-                      : "";
-                  setSelectedPath(fallbackPath);
-                }}
-              >
-                {namespaceOptions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
 
           <div className="mb-4 grid gap-3 rounded-[20px] bg-[#e8f1f0]/70 px-4 py-3.5">
             <div>
@@ -1052,9 +914,7 @@ export default function App(): JSX.Element {
               <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
               <span className="block break-words text-sm text-[#183039]">
                 {activeEnvironment
-                  ? activeNamespace && activeNamespace.id !== ROOT_NAMESPACE_ID
-                    ? `${activeEnvironment.root}/${activeNamespace.id}`
-                    : activeEnvironment.root
+                  ? activeEnvironment.root
                   : bootstrap?.config.visibleRoots?.join(" / ") || "-"}
               </span>
             </div>
@@ -1068,23 +928,28 @@ export default function App(): JSX.Element {
             <div className="mb-3.5 rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">{bootstrap.repoStatus.lastError}</div>
           ) : null}
 
-          <label className={formRowClass}>
-            <span className={formLabelClass}>文件检索</span>
+          <label className="mb-4 flex min-h-[42px] items-center gap-2 rounded-xl border border-[#dfe4e6] bg-white px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+            <span className="text-2xl font-light leading-none text-[#8b9499]">⌕</span>
             <input
-              className={inputClass}
+              className="min-w-0 flex-1 border-0 bg-transparent py-2.5 text-[15px] text-[#24292f] outline-none placeholder:text-[#8b8f93]"
               value={fileQuery}
               onChange={(event) => setFileQuery(event.target.value)}
-              placeholder="按文件名或路径检索"
+              placeholder="Filter files..."
             />
           </label>
 
-          <div className="grid gap-2.5">
+          <div className="-mx-2 rounded-xl bg-[#f1f5f4] px-2 py-2">
             {visibleFiles.length === 0 ? (
               <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
             ) : filteredVisibleFiles.length === 0 ? (
               <div className={emptyBlockClass}>没有匹配当前检索条件的文件</div>
             ) : (
-              <FileTree nodes={fileTree} selectedPath={selectedPath} onSelect={setSelectedPath} />
+              <FileTree
+                nodes={fileTree}
+                selectedPath={selectedPath}
+                onSelect={setSelectedPath}
+                forceOpen={Boolean(normalizedFileQuery)}
+              />
             )}
           </div>
         </aside>
