@@ -511,7 +511,7 @@ async function readFileHistorySnapshots(
     [
       "log",
       `-${limit}`,
-      "--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e",
+      "--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%B%x1e",
       "--date=iso-strict",
       "--",
       repoRelativePath
@@ -530,8 +530,9 @@ async function readFileHistorySnapshots(
 
   return Promise.all(
     records.map(async (record) => {
-      const [hash, authorName, authorEmail, committedAt, message = ""] =
+      const [hash, authorName, authorEmail, committedAt, ...messageParts] =
         record.split("\x1f");
+      const message = messageParts.join("\x1f").trim();
       const [beforeContent, afterContent] = await Promise.all([
         readGitFile(repoPath, `${hash}^`, repoRelativePath),
         readGitFile(repoPath, hash, repoRelativePath)

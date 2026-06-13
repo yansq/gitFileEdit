@@ -135,6 +135,16 @@ function formatTime(isoTime: string | null): string {
   });
 }
 
+function getCommitSubject(message: string): string {
+  return message.split("\n")[0]?.trim() || "无提交说明";
+}
+
+function getCommitBody(message: string): string {
+  const lines = message.split("\n");
+  lines.shift();
+  return lines.join("\n").trim();
+}
+
 function formatSize(size: number): string {
   if (size < 1024) {
     return `${size} B`;
@@ -1504,6 +1514,7 @@ export default function App(): JSX.Element {
                   <div className="max-h-[520px] overflow-auto p-2">
                     {fileHistory.map((commit) => {
                       const isSelected = commit.hash === selectedHistory.hash;
+                      const commitSubject = getCommitSubject(commit.message);
                       return (
                         <button
                           key={commit.hash}
@@ -1517,7 +1528,7 @@ export default function App(): JSX.Element {
                           onClick={() => setSelectedHistoryHash(commit.hash)}
                         >
                           <span className="block break-words text-sm font-semibold text-[#183039]">
-                            {commit.message || "无提交说明"}
+                            {commitSubject}
                           </span>
                           <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
                             <span>{commit.authorName}</span>
@@ -1536,7 +1547,7 @@ export default function App(): JSX.Element {
                   <div className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="break-words text-base font-bold text-[#183039]">
-                        {selectedHistory.message || "无提交说明"}
+                        {getCommitSubject(selectedHistory.message)}
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
                         <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
@@ -1549,6 +1560,11 @@ export default function App(): JSX.Element {
                           {selectedHistory.hash}
                         </span>
                       </div>
+                      {getCommitBody(selectedHistory.message) ? (
+                        <div className="mt-3 whitespace-pre-wrap break-words rounded-2xl border border-[#183039]/10 bg-[#f6f9f7]/85 px-3.5 py-3 text-sm leading-6 text-[#40545b]">
+                          {getCommitBody(selectedHistory.message)}
+                        </div>
+                      ) : null}
                     </div>
                     <button
                       className={primaryButtonClass}
