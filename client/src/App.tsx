@@ -10,6 +10,7 @@ import {
 import type {
   AuthUser,
   BootstrapResponse,
+  CommitSnapshot,
   FileConflictPayload,
   FileDetail,
   RepoEnvironmentOption,
@@ -509,6 +510,8 @@ export default function App(): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [confirmingCommit, setConfirmingCommit] = useState(false);
+  const [selectedHistoryHash, setSelectedHistoryHash] = useState<string>("");
+  const [restoringHash, setRestoringHash] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -668,6 +671,20 @@ export default function App(): JSX.Element {
       setError((fetchError as Error).message);
     });
   }, [selectedPath]);
+
+  useEffect(() => {
+    const history = fileDetail?.history ?? [];
+    if (!history.length) {
+      setSelectedHistoryHash("");
+      return;
+    }
+
+    setSelectedHistoryHash((current) =>
+      current && history.some((item) => item.hash === current)
+        ? current
+        : history[0].hash
+    );
+  }, [fileDetail?.path, fileDetail?.history]);
 
   useEffect(() => {
     if (!authUser) {
@@ -860,6 +877,75 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function restoreHistoryCommit(commit: CommitSnapshot): Promise<void> {
+    if (!selectedPath || !fileDetail) {
+      return;
+    }
+
+    if (
+      editorDirty &&
+      !window.confirm("编辑区有未提交的内容，回滚会用历史版本覆盖当前文件。确认继续？")
+    ) {
+      return;
+    }
+
+    setRestoringHash(commit.hash);
+    setError(null);
+    setMessage(null);
+    setFileValidationError(null);
+
+    try {
+      await requestJson<{ head: string; path: string }>("/api/file/restore", {
+        method: "POST",
+        body: JSON.stringify({
+          path: selectedPath,
+          hash: commit.hash,
+          baseHead: fileDetail.baseHead,
+          baseBlob: fileDetail.baseBlob
+        })
+      });
+
+      setFileConflict(null);
+      await refreshBootstrap(selectedPath);
+      await refreshFile(selectedPath, false);
+      setMessage("已回滚到所选历史版本并推送到远程仓库");
+    } catch (restoreError) {
+      if (
+        restoreError instanceof ApiRequestError &&
+        restoreError.status === 409 &&
+        isFileConflictPayload(restoreError.payload)
+      ) {
+        const conflictPayload = restoreError.payload;
+        setFileConflict(conflictPayload);
+        setFileDetail((current) =>
+          current
+            ? {
+              ...current,
+              baseHead: conflictPayload.remoteHead ?? current.baseHead,
+              baseBlob: conflictPayload.remoteBlob,
+              remoteHead: conflictPayload.remoteHead,
+              remoteBlob: conflictPayload.remoteBlob,
+              remoteContent: conflictPayload.remoteContent,
+              headContent: conflictPayload.remoteContent
+            }
+            : current
+        );
+        setEditorDirty(true);
+      } else if (handleAuthRequired(restoreError)) {
+        return;
+      } else if (
+        restoreError instanceof ApiRequestError &&
+        restoreError.status === 400 &&
+        isFileValidationPayload(restoreError.payload)
+      ) {
+        setFileValidationError(restoreError.payload.message);
+      }
+      setError((restoreError as Error).message);
+    } finally {
+      setRestoringHash(null);
+    }
+  }
+
   async function syncRepository(): Promise<void> {
     setSyncing(true);
     setError(null);
@@ -961,6 +1047,9 @@ export default function App(): JSX.Element {
   const pendingBaseContent = fileDetail?.headContent ?? "";
   const pendingContent = editorDirty ? editorContent : fileDetail?.content ?? "";
   const hasPendingChanges = Boolean(selectedPath) && pendingBaseContent !== pendingContent;
+  const fileHistory = fileDetail?.history ?? [];
+  const selectedHistory =
+    fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
 
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
@@ -1400,34 +1489,86 @@ export default function App(): JSX.Element {
 
           <section className={panelClass}>
             <div className={panelTitleRowClass}>
-              <h2 className="m-0 text-lg">最近一次提交对比</h2>
+              <h2 className="m-0 text-lg">文件历史记录</h2>
               <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
-                {fileDetail?.lastCommit ? fileDetail.lastCommit.message : "暂无提交记录"}
+                {fileHistory.length ? `最近 ${fileHistory.length} 次提交` : "暂无提交记录"}
               </span>
             </div>
 
-            {fileDetail?.lastCommit ? (
-              <>
-                <div className="mb-3.5 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
-                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
-                    {fileDetail.lastCommit.authorName}
-                  </span>
-                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
-                    {formatTime(fileDetail.lastCommit.committedAt)}
-                  </span>
-                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
-                    {fileDetail.lastCommit.hash}
-                  </span>
+            {selectedHistory ? (
+              <div className="grid gap-4 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
+                <div className="min-h-0 overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#f6f9f7]/85">
+                  <div className="border-b border-[#183039]/10 px-4 py-3 text-sm font-semibold text-[#20404a]">
+                    历史提交
+                  </div>
+                  <div className="max-h-[520px] overflow-auto p-2">
+                    {fileHistory.map((commit) => {
+                      const isSelected = commit.hash === selectedHistory.hash;
+                      return (
+                        <button
+                          key={commit.hash}
+                          className={cn(
+                            "mb-2 w-full rounded-[18px] border px-3.5 py-3 text-left transition duration-200",
+                            isSelected
+                              ? "border-[#0e6b72]/25 bg-white shadow-[0_14px_32px_rgba(28,64,54,0.12)]"
+                              : "border-transparent bg-transparent hover:bg-white/75"
+                          )}
+                          type="button"
+                          onClick={() => setSelectedHistoryHash(commit.hash)}
+                        >
+                          <span className="block break-words text-sm font-semibold text-[#183039]">
+                            {commit.message || "无提交说明"}
+                          </span>
+                          <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
+                            <span>{commit.authorName}</span>
+                            <span>{formatTime(commit.committedAt)}</span>
+                          </span>
+                          <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
+                            {commit.hash}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <DiffView
-                  before={fileDetail.lastCommit.beforeContent}
-                  after={fileDetail.lastCommit.afterContent}
-                  emptyText="最近一次提交没有内容变化"
-                  className="max-h-[420px] overflow-auto"
-                />
-              </>
+
+                <div className="min-w-0">
+                  <div className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="break-words text-base font-bold text-[#183039]">
+                        {selectedHistory.message || "无提交说明"}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
+                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                          {selectedHistory.authorName}
+                        </span>
+                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                          {formatTime(selectedHistory.committedAt)}
+                        </span>
+                        <span className="inline-flex min-h-7 max-w-full items-center break-all rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
+                          {selectedHistory.hash}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      className={primaryButtonClass}
+                      type="button"
+                      onClick={() => void restoreHistoryCommit(selectedHistory)}
+                      disabled={!selectedPath || restoringHash !== null}
+                    >
+                      {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
+                    </button>
+                  </div>
+                  <DiffView
+                    before={selectedHistory.beforeContent}
+                    after={selectedHistory.afterContent}
+                    emptyText="该提交没有内容变化"
+                    className="max-h-[520px] overflow-auto"
+                  />
+                </div>
+              </div>
             ) : (
-              <div className={emptyBlockClass}>当前文件还没有最近提交对比可展示</div>
+              <div className={emptyBlockClass}>当前文件还没有历史记录可展示</div>
             )}
           </section>
         </main>

@@ -19,6 +19,7 @@ import {
   listRepoFiles,
   readFileDetail,
   repoExists,
+  restoreFileToHistoryCommit,
   syncRepo,
   writeRepoFile
 } from "./git";
@@ -241,6 +242,50 @@ app.post("/api/commit", async (request, response, next) => {
       path: filePath,
       content,
       message: detailMessage,
+      baseHead,
+      baseBlob,
+      actor: request.user
+    });
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    lastRepoError = null;
+    notifier.broadcast("repo-changed", {
+      relativePath: result.path,
+      eventType: "commit"
+    });
+    response.json(result);
+  } catch (error) {
+    if (!(error instanceof FileConflictError)) {
+      lastRepoError = toErrorMessage(error);
+    }
+    next(error);
+  }
+});
+
+app.post("/api/file/restore", async (request, response, next) => {
+  try {
+    const filePath = String(request.body.path ?? "").trim();
+    const hash = String(request.body.hash ?? "").trim();
+    const baseHead = String(request.body.baseHead ?? "").trim();
+    const baseBlob =
+      typeof request.body.baseBlob === "string" ? request.body.baseBlob : null;
+    if (!filePath) {
+      response.status(400).json({ error: "缺少文件路径" });
+      return;
+    }
+    if (!hash) {
+      response.status(400).json({ error: "缺少历史版本标识" });
+      return;
+    }
+    if (!baseHead) {
+      response.status(400).json({ error: "缺少打开文件时的版本信息" });
+      return;
+    }
+
+    const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
+    const result = await restoreFileToHistoryCommit(config, runtime, {
+      path: filePath,
+      hash,
       baseHead,
       baseBlob,
       actor: request.user

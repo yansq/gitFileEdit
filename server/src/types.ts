@@ -72,6 +72,7 @@ export interface FileDetail {
   isDirty: boolean;
   modifiedAt: string;
   lastCommit: CommitSnapshot | null;
+  history: CommitSnapshot[];
 }
 
 export interface FileConflictPayload {
