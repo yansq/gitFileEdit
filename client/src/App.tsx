@@ -4,7 +4,6 @@ import type {
   AuthUser,
   BootstrapResponse,
   FileDetail,
-  GitSettingsSummary,
   RepoEnvironmentOption,
   RepoFileSummary
 } from "./types";
@@ -426,8 +425,7 @@ export default function App(): JSX.Element {
   const [editorContent, setEditorContent] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [gitForm, setGitForm] = useState({
-    commitMessagePrefix: "",
-    commitMessage: ""
+    extraMessage: ""
   });
   const [settingsSeeded, setSettingsSeeded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -491,8 +489,7 @@ export default function App(): JSX.Element {
       setSelectedPath(nextPath);
       if (!settingsSeeded || !preserveForm) {
         setGitForm({
-          commitMessagePrefix: data.gitSettings.commitMessagePrefix,
-          commitMessage: ""
+          extraMessage: ""
         });
         setSettingsSeeded(true);
       }
@@ -582,30 +579,6 @@ export default function App(): JSX.Element {
     };
   }, [authUser, selectedPath, editorDirty, settingsSeeded]);
 
-  async function saveGitSettings(): Promise<void> {
-    const response = await requestJson<{ gitSettings: GitSettingsSummary }>("/api/settings/git", {
-      method: "POST",
-      body: JSON.stringify({
-        commitMessagePrefix: gitForm.commitMessagePrefix
-      })
-    });
-
-    startTransition(() => {
-      setBootstrap((current) =>
-        current
-          ? {
-              ...current,
-              gitSettings: response.gitSettings
-            }
-          : current
-      );
-      setGitForm((current) => ({
-        ...current,
-        commitMessagePrefix: response.gitSettings.commitMessagePrefix
-      }));
-    });
-  }
-
   async function saveCurrentFile(): Promise<void> {
     if (!selectedPath) {
       return;
@@ -648,7 +621,6 @@ export default function App(): JSX.Element {
     setMessage(null);
 
     try {
-      await saveGitSettings();
       if (editorDirty) {
         await requestJson<FileDetail>("/api/file", {
           method: "PUT",
@@ -664,7 +636,7 @@ export default function App(): JSX.Element {
         method: "POST",
         body: JSON.stringify({
           path: selectedPath,
-          message: gitForm.commitMessage
+          message: gitForm.extraMessage
         })
       });
 
@@ -672,7 +644,7 @@ export default function App(): JSX.Element {
       await refreshFile(selectedPath, false);
       setGitForm((current) => ({
         ...current,
-        commitMessage: ""
+        extraMessage: ""
       }));
       setMessage("修改已提交并推送到远程仓库");
     } catch (commitError) {
@@ -949,7 +921,7 @@ export default function App(): JSX.Element {
         </div>
       </header>
 
-      <div className="grid gap-[22px] min-[1321px]:grid-cols-[320px_minmax(0,1fr)_320px] min-[961px]:max-[1320px]:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid gap-[22px] min-[961px]:grid-cols-[320px_minmax(0,1fr)]">
         <aside className={cn(panelClass, "min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-auto")}>
           <div className={panelTitleRowClass}>
             <h2 className="m-0 text-lg">文件列表</h2>
@@ -1119,9 +1091,28 @@ export default function App(): JSX.Element {
 
         <main className="grid gap-[22px]">
           <section className={panelClass}>
-            <div className={panelTitleRowClass}>
-              <h2 className="m-0 text-lg">{selectedPath || "当前文件"}</h2>
-              <div className="flex gap-2.5">
+            <div className="mb-4 grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(460px,auto)]">
+              <div className="min-w-0">
+                <h2 className="m-0 break-words text-lg">{selectedPath || "当前文件"}</h2>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#5d7077]">
+                  <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-[#214954]">
+                    {activeEnvironment?.label ?? "未选择环境"}
+                  </span>
+                </div>
+              </div>
+              <div className="grid gap-2.5 sm:grid-cols-[minmax(220px,1fr)_auto_auto]">
+                <textarea
+                  className={cn(inputClass, "min-h-[46px] resize-y py-2.5 text-sm")}
+                  rows={1}
+                  value={gitForm.extraMessage}
+                  placeholder="commit 信息"
+                  onChange={(event) =>
+                    setGitForm((current) => ({
+                      ...current,
+                      extraMessage: event.target.value
+                    }))
+                  }
+                />
                 <button className={secondaryButtonClass} onClick={() => void saveCurrentFile()} disabled={!selectedPath || saving}>
                   {saving ? "保存中..." : "保存"}
                 </button>
@@ -1200,46 +1191,6 @@ export default function App(): JSX.Element {
           </section>
         </main>
 
-        <aside className={cn(panelClass, "min-[1321px]:sticky min-[1321px]:top-5 min-[1321px]:max-h-[calc(100vh-40px)] min-[1321px]:overflow-auto min-[961px]:max-[1320px]:col-span-full")}>
-          <h2 className="m-0 mb-4 text-lg">提交设置</h2>
-          <label className={formRowClass}>
-            <span className={formLabelClass}>Commit Message 前缀</span>
-            <input
-              className={inputClass}
-              value={gitForm.commitMessagePrefix}
-              onChange={(event) =>
-                setGitForm((current) => ({
-                  ...current,
-                  commitMessagePrefix: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <label className={formRowClass}>
-            <span className={formLabelClass}>本次提交说明</span>
-            <textarea
-              className={inputClass}
-              rows={6}
-              value={gitForm.commitMessage}
-              placeholder={"建议包含：\n提交人：张三\n修改环境：开发环境\n修改内容：调整 xxx 配置为 yyy"}
-              onChange={(event) =>
-                setGitForm((current) => ({
-                  ...current,
-                  commitMessage: event.target.value
-                }))
-              }
-            />
-          </label>
-
-          <button className={cn(secondaryButtonClass, "w-full")} onClick={() => void saveGitSettings()}>
-            保存前缀
-          </button>
-
-          <div className="mt-4 rounded-[18px] bg-[#ebf2f8]/70 px-4 py-3.5 leading-relaxed text-[#4a5f68]">
-            提交说明建议包含提交人、修改环境、修改内容。这里仅做提醒，不会阻止提交；最终 commit message 前缀始终读取服务端配置。
-          </div>
-        </aside>
       </div>
     </div>
   );

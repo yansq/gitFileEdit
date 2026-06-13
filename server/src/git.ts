@@ -11,6 +11,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import {
+  getEnvironmentOptions,
   normalizeVisibleRoots,
   resolveRepoPath
 } from "./config";
@@ -52,6 +53,16 @@ function normalizeAllowedFilePath(config: AppConfig, repoPath: string, filePath:
     throw new Error("仅允许访问 dev、sit、uat、prod 目录下的文件");
   }
   return repoRelativePath;
+}
+
+function getEnvironmentLabelForFile(config: AppConfig, repoRelativePath: string): string | null {
+  const normalizedPath = repoRelativePath.replace(/^\/+/, "");
+  const matchedEnvironment = getEnvironmentOptions(config).find((environment) => {
+    const root = environment.root.replace(/^\/+|\/+$/g, "");
+    return normalizedPath === root || normalizedPath.startsWith(`${root}/`);
+  });
+
+  return matchedEnvironment?.label ?? null;
 }
 
 function getConfiguredRepoAuth(config: AppConfig): {
@@ -526,12 +537,14 @@ export async function commitAndPushFile(
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, input.path);
   const detailMessage = input.message.trim();
   const prefix = config.repo.commitMessagePrefix || "";
-  const actorLines = input.actor
-    ? [`操作人：${input.actor.id}`]
-    : [];
+  const environmentLabel = getEnvironmentLabelForFile(config, repoRelativePath);
+  const metadataLines = [
+    input.actor ? `提交用户：${input.actor.id}` : null,
+    environmentLabel ? `修改环境：${environmentLabel}` : null
+  ].filter((item): item is string => Boolean(item));
   const commitMessage = [
     `${prefix}${detailMessage || "更新配置"}`.trim(),
-    ...actorLines
+    ...metadataLines
   ].join("\n\n");
 
   const workingTreeStatus = await runGit(["status", "--porcelain", "--", repoRelativePath], {
