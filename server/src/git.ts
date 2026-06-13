@@ -170,6 +170,27 @@ async function runGit(
   }
 }
 
+async function runGitRaw(
+  args: string[],
+  options: {
+    cwd: string;
+  }
+): Promise<string> {
+  try {
+    const result = await execFileAsync("git", args, {
+      cwd: options.cwd,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0"
+      },
+      maxBuffer: 10 * 1024 * 1024
+    });
+    return result.stdout;
+  } catch (error) {
+    throw formatGitError(error);
+  }
+}
+
 export async function repoExists(repoPath: string): Promise<boolean> {
   try {
     await access(path.join(repoPath, ".git"));
@@ -435,7 +456,7 @@ async function readGitFile(
   repoRelativePath: string
 ): Promise<string> {
   try {
-    return await runGit([`show`, `${ref}:${repoRelativePath}`], { cwd: repoPath });
+    return await runGitRaw([`show`, `${ref}:${repoRelativePath}`], { cwd: repoPath });
   } catch {
     return "";
   }

@@ -13,6 +13,7 @@ interface DiffRow {
   type: "added" | "removed" | "same";
   marker: "+" | "-" | " ";
   text: string;
+  hasNewline: boolean;
 }
 
 interface FileTreeNode {
@@ -337,30 +338,32 @@ function DiffView(props: {
   before: string;
   after: string;
   emptyText: string;
+  className?: string;
+  showContentWhenUnchanged?: boolean;
 }): JSX.Element {
   const segments = diffLines(props.before, props.after);
-  const rows: DiffRow[] = segments.flatMap((segment, index) => {
-    const rawLines = segment.value.split("\n");
-    if (segment.value.endsWith("\n")) {
-      rawLines.pop();
-      rawLines.push("");
-    }
+  const diffRows: DiffRow[] = segments.flatMap((segment, index) => {
+    const rawLines = splitDiffLines(segment.value);
 
     return rawLines.map((line, lineIndex): DiffRow => ({
       id: `${index}-${lineIndex}`,
       type: segment.added ? "added" : segment.removed ? "removed" : "same",
       marker: segment.added ? "+" : segment.removed ? "-" : " ",
-      text: line
+      text: line.text,
+      hasNewline: line.hasNewline
     }));
   });
 
-  const hasChange = rows.some((row) => row.type !== "same");
-  if (!hasChange) {
-    return <div className={emptyBlockClass}>{props.emptyText}</div>;
+  const hasChange = diffRows.some((row) => row.type !== "same");
+  const rows = hasChange || props.showContentWhenUnchanged
+    ? diffRows
+    : [];
+  if (rows.length === 0) {
+    return <div className={cn(emptyBlockClass, props.className)}>{props.emptyText}</div>;
   }
 
   return (
-    <div className="grid gap-0.5 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4">
+    <div className={cn("grid auto-rows-min content-start gap-0.5 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4", props.className)}>
       {rows.map((row) => (
         <div
           key={row.id}
@@ -372,7 +375,7 @@ function DiffView(props: {
         >
           <span className="font-mono text-[#4a5b61]">{row.marker}</span>
           <span className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.65]">
-            {row.text || " "}
+            <VisibleWhitespace text={row.text} hasNewline={row.hasNewline} />
           </span>
         </div>
       ))}
@@ -380,12 +383,51 @@ function DiffView(props: {
   );
 }
 
-function ContentBlock(props: { content: string; emptyText: string }): JSX.Element {
-  if (!props.content) {
-    return <div className={emptyBlockClass}>{props.emptyText}</div>;
+function splitDiffLines(value: string): Array<{ text: string; hasNewline: boolean }> {
+  if (!value) {
+    return [];
   }
 
-  return <pre className={cn(codeSurfaceClass, "min-h-[480px]")}>{props.content}</pre>;
+  const lines = value.split("\n").map((text, index, allLines) => ({
+    text,
+    hasNewline: index < allLines.length - 1
+  }));
+
+  if (value.endsWith("\n")) {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+function VisibleWhitespace(props: { text: string; hasNewline: boolean }): JSX.Element {
+  const characters = Array.from(props.text);
+
+  return (
+    <>
+      {characters.length === 0 && !props.hasNewline ? " " : null}
+      {characters.map((character, index) => {
+        if (character === " ") {
+          return (
+            <span key={index} className="text-[#84969c]">
+              ·
+            </span>
+          );
+        }
+
+        if (character === "\t") {
+          return (
+            <span key={index} className="text-[#84969c]">
+              ⇥
+            </span>
+          );
+        }
+
+        return <span key={index}>{character}</span>;
+      })}
+      {props.hasNewline ? <span className="ml-1 text-[#84969c]">↵</span> : null}
+    </>
+  );
 }
 
 export default function App(): JSX.Element {
@@ -700,6 +742,9 @@ export default function App(): JSX.Element {
         )
       : [];
   const repoReady = bootstrap?.repoStatus.ready ?? false;
+  const pendingBaseContent = fileDetail?.headContent ?? "";
+  const pendingContent = editorDirty ? editorContent : fileDetail?.content ?? "";
+  const hasPendingChanges = Boolean(selectedPath) && pendingBaseContent !== pendingContent;
 
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
@@ -993,10 +1038,20 @@ export default function App(): JSX.Element {
 
             <div className="grid gap-[18px] min-[961px]:grid-cols-2">
               <div className="grid gap-3">
-                <div className="font-bold text-[#20404a]">最新预览</div>
-                <ContentBlock
-                  content={fileDetail?.remoteContent ?? ""}
-                  emptyText={loading ? "正在加载..." : "请选择文件"}
+                <div className="flex min-h-[32px] flex-wrap items-center gap-2">
+                  <div className="font-bold text-[#20404a]">原始文件</div>
+                  {selectedPath && !hasPendingChanges ? (
+                    <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
+                      当前文件没有未提交差异
+                    </span>
+                  ) : null}
+                </div>
+                <DiffView
+                  before={pendingBaseContent}
+                  after={pendingContent}
+                  emptyText={loading ? "正在加载..." : "当前文件没有未提交差异"}
+                  className="min-h-[480px]"
+                  showContentWhenUnchanged
                 />
               </div>
 
@@ -1014,18 +1069,6 @@ export default function App(): JSX.Element {
                 />
               </div>
             </div>
-          </section>
-
-          <section className={panelClass}>
-            <div className={panelTitleRowClass}>
-              <h2 className="m-0 text-lg">当前工作区与 HEAD 对比</h2>
-              <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">{fileDetail?.isDirty ? "有未提交修改" : "已和 HEAD 一致"}</span>
-            </div>
-            <DiffView
-              before={fileDetail?.headContent ?? ""}
-              after={editorDirty ? editorContent : fileDetail?.content ?? ""}
-              emptyText="当前文件没有未提交差异"
-            />
           </section>
 
           <section className={panelClass}>
