@@ -41,6 +41,12 @@ interface AuthResponse {
   user: AuthUser;
 }
 
+interface FileValidationPayload {
+  type: "file_validation";
+  fileType: string;
+  message: string;
+}
+
 function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
@@ -104,9 +110,18 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 function isFileConflictPayload(value: unknown): value is FileConflictPayload {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as { type?: unknown }).type === "conflict" &&
-      typeof (value as { path?: unknown }).path === "string"
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "conflict" &&
+    typeof (value as { path?: unknown }).path === "string"
+  );
+}
+
+function isFileValidationPayload(value: unknown): value is FileValidationPayload {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "file_validation" &&
+    typeof (value as { message?: unknown }).message === "string"
   );
 }
 
@@ -309,7 +324,7 @@ function FileTreeRow(props: {
       className={cn(
         "group grid min-h-[34px] w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
         props.selectedPath === props.node.path &&
-          "font-semibold text-[#111827]"
+        "font-semibold text-[#111827]"
       )}
       onClick={() => props.onSelect(props.node.path)}
       style={{ paddingLeft: `${indent + 18}px` }}
@@ -485,6 +500,7 @@ export default function App(): JSX.Element {
   const [editorContent, setEditorContent] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [fileConflict, setFileConflict] = useState<FileConflictPayload | null>(null);
+  const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const [gitForm, setGitForm] = useState({
     extraMessage: ""
   });
@@ -492,6 +508,7 @@ export default function App(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [confirmingCommit, setConfirmingCommit] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -505,6 +522,30 @@ export default function App(): JSX.Element {
   });
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [loggingIn, setLoggingIn] = useState(false);
+
+  function resetAuthenticatedState(): void {
+    setAuthUser(null);
+    setBootstrap(null);
+    setSelectedPath("");
+    setFileDetail(null);
+    setEditorContent("");
+    setEditorDirty(false);
+    setFileConflict(null);
+    setFileValidationError(null);
+    setLiveNotice(null);
+  }
+
+  function handleAuthRequired(errorValue: unknown): boolean {
+    if (errorValue instanceof ApiRequestError && errorValue.status === 401) {
+      resetAuthenticatedState();
+      setAuthChecked(true);
+      setError(null);
+      setMessage(null);
+      return true;
+    }
+
+    return false;
+  }
 
   function scrollPendingDiffToRatio(ratio: number): void {
     const diffElement = pendingDiffRef.current;
@@ -577,6 +618,7 @@ export default function App(): JSX.Element {
         setEditorContent("");
         setEditorDirty(false);
         setFileConflict(null);
+        setFileValidationError(null);
       });
       return;
     }
@@ -591,6 +633,7 @@ export default function App(): JSX.Element {
         setEditorContent(detail.content);
         setEditorDirty(false);
         setFileConflict(null);
+        setFileValidationError(null);
       }
     });
   }
@@ -601,7 +644,8 @@ export default function App(): JSX.Element {
         setLoading(true);
         const authResponse = await fetch("/api/auth/me");
         if (!authResponse.ok) {
-          setAuthUser(null);
+          resetAuthenticatedState();
+          setError(null);
           return;
         }
         const authPayload = (await authResponse.json()) as AuthResponse;
@@ -617,10 +661,10 @@ export default function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!selectedPath) {
-      return;
-    }
     void refreshFile(selectedPath, false).catch((fetchError) => {
+      if (handleAuthRequired(fetchError)) {
+        return;
+      }
       setError((fetchError as Error).message);
     });
   }, [selectedPath]);
@@ -641,6 +685,9 @@ export default function App(): JSX.Element {
           }
           setLiveNotice(editorDirty ? "仓库已更新，预览已刷新" : "仓库内容已同步刷新");
         } catch (fetchError) {
+          if (handleAuthRequired(fetchError)) {
+            return;
+          }
           setError((fetchError as Error).message);
         }
       })();
@@ -655,6 +702,48 @@ export default function App(): JSX.Element {
     };
   }, [authUser, selectedPath, editorDirty, settingsSeeded]);
 
+  useEffect(() => {
+    if (!authUser || !message) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setMessage(null);
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [authUser, message]);
+
+  useEffect(() => {
+    if (!authUser || !liveNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setLiveNotice(null);
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [authUser, liveNotice]);
+
+  useEffect(() => {
+    if (!authUser || !error) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setError(null);
+    }, 5200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [authUser, error]);
+
   async function saveCurrentFile(): Promise<void> {
     if (!selectedPath) {
       return;
@@ -663,6 +752,7 @@ export default function App(): JSX.Element {
     setSaving(true);
     setError(null);
     setMessage(null);
+    setFileValidationError(null);
 
     try {
       setFileConflict(null);
@@ -682,6 +772,16 @@ export default function App(): JSX.Element {
       setMessage("文件已暂存到工作区");
       await refreshBootstrap(selectedPath);
     } catch (saveError) {
+      if (handleAuthRequired(saveError)) {
+        return;
+      }
+      if (
+        saveError instanceof ApiRequestError &&
+        saveError.status === 400 &&
+        isFileValidationPayload(saveError.payload)
+      ) {
+        setFileValidationError(saveError.payload.message);
+      }
       setError((saveError as Error).message);
     } finally {
       setSaving(false);
@@ -693,9 +793,11 @@ export default function App(): JSX.Element {
       return;
     }
 
+    setConfirmingCommit(false);
     setCommitting(true);
     setError(null);
     setMessage(null);
+    setFileValidationError(null);
 
     try {
       if (!fileDetail) {
@@ -732,17 +834,25 @@ export default function App(): JSX.Element {
         setFileDetail((current) =>
           current
             ? {
-                ...current,
-                baseHead: conflictPayload.remoteHead ?? current.baseHead,
-                baseBlob: conflictPayload.remoteBlob,
-                remoteHead: conflictPayload.remoteHead,
-                remoteBlob: conflictPayload.remoteBlob,
-                remoteContent: conflictPayload.remoteContent,
-                headContent: conflictPayload.remoteContent
-              }
+              ...current,
+              baseHead: conflictPayload.remoteHead ?? current.baseHead,
+              baseBlob: conflictPayload.remoteBlob,
+              remoteHead: conflictPayload.remoteHead,
+              remoteBlob: conflictPayload.remoteBlob,
+              remoteContent: conflictPayload.remoteContent,
+              headContent: conflictPayload.remoteContent
+            }
             : current
         );
         setEditorDirty(true);
+      } else if (handleAuthRequired(commitError)) {
+        return;
+      } else if (
+        commitError instanceof ApiRequestError &&
+        commitError.status === 400 &&
+        isFileValidationPayload(commitError.payload)
+      ) {
+        setFileValidationError(commitError.payload.message);
       }
       setError((commitError as Error).message);
     } finally {
@@ -765,6 +875,9 @@ export default function App(): JSX.Element {
       }
       setMessage("仓库已同步");
     } catch (syncError) {
+      if (handleAuthRequired(syncError)) {
+        return;
+      }
       setError((syncError as Error).message);
     } finally {
       setSyncing(false);
@@ -800,6 +913,9 @@ export default function App(): JSX.Element {
       });
       await refreshBootstrap(undefined, false);
     } catch (loginError) {
+      if (handleAuthRequired(loginError)) {
+        return;
+      }
       setError((loginError as Error).message);
     } finally {
       setLoggingIn(false);
@@ -811,12 +927,9 @@ export default function App(): JSX.Element {
     await requestJson<{ ok: boolean }>("/api/auth/logout", {
       method: "POST"
     }).catch(() => ({ ok: true }));
-    setAuthUser(null);
-    setBootstrap(null);
-    setSelectedPath("");
-    setFileDetail(null);
-    setEditorContent("");
-    setEditorDirty(false);
+    resetAuthenticatedState();
+    setError(null);
+    setMessage(null);
   }
 
   const files: RepoFileSummary[] = bootstrap?.files ?? [];
@@ -830,19 +943,19 @@ export default function App(): JSX.Element {
   const normalizedFileQuery = fileQuery.trim().toLocaleLowerCase();
   const filteredVisibleFiles = normalizedFileQuery
     ? visibleFiles.filter((file) => {
-        const relativePath =
-          activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
-        const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
-        return searchTarget.includes(normalizedFileQuery);
-      })
+      const relativePath =
+        activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
+      const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
+      return searchTarget.includes(normalizedFileQuery);
+    })
     : visibleFiles;
   const fileTree =
     activeEnvironment
       ? buildFileTree(
-          filteredVisibleFiles,
-          (file) => getPathWithinRoot(file.path, activeEnvironment.root),
-          activeEnvironment.root
-        )
+        filteredVisibleFiles,
+        (file) => getPathWithinRoot(file.path, activeEnvironment.root),
+        activeEnvironment.root
+      )
       : [];
   const repoReady = bootstrap?.repoStatus.ready ?? false;
   const pendingBaseContent = fileDetail?.headContent ?? "";
@@ -865,7 +978,7 @@ export default function App(): JSX.Element {
             Git File Console
           </p>
           <h1 className="m-0 text-3xl leading-tight">
-            {isRegistering ? "注册账号" : "登录后修改配置"}
+            {isRegistering ? "注册账号（请使用真实姓名或工号）" : "登录后修改配置"}
           </h1>
           <div className="mt-6 grid gap-4">
             <label className={formRowClass}>
@@ -959,6 +1072,68 @@ export default function App(): JSX.Element {
 
   return (
     <div className="p-4 sm:p-7">
+      {message || liveNotice || error ? (
+        <div
+          className="fixed left-1/2 top-4 z-50 grid w-[min(380px,calc(100vw-32px))] -translate-x-1/2 gap-2"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {message ? (
+            <div className="rounded-2xl border border-[#1d8c68]/15 bg-white/95 px-4 py-3 text-sm text-[#12684d] shadow-[0_18px_50px_rgba(28,64,54,0.16)] backdrop-blur">
+              {message}
+            </div>
+          ) : null}
+          {liveNotice ? (
+            <div className="rounded-2xl border border-[#2475b2]/15 bg-white/95 px-4 py-3 text-sm text-[#18527e] shadow-[0_18px_50px_rgba(28,64,54,0.16)] backdrop-blur">
+              {liveNotice}
+            </div>
+          ) : null}
+          {error ? (
+            <div className="rounded-2xl border border-[#c94a35]/15 bg-white/95 px-4 py-3 text-sm text-[#8d3322] shadow-[0_18px_50px_rgba(28,64,54,0.16)] backdrop-blur">
+              {error}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {confirmingCommit ? (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-[#18242d]/35 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-[440px] rounded-[24px] border border-slate-900/10 bg-white p-5 shadow-[0_30px_90px_rgba(24,36,45,0.24)]">
+            <h2 className="m-0 text-xl leading-tight text-[#183039]">确认提交并推送该文件？</h2>
+            <div className="mt-4 grid gap-3 text-sm text-[#53666d]">
+              <div>
+                <div className="mb-1 font-semibold text-[#253c44]">文件</div>
+                <div className="break-all rounded-2xl bg-[#f3f6f5] px-3 py-2 font-mono text-xs text-[#183039]">
+                  {selectedPath}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 font-semibold text-[#253c44]">Commit 信息</div>
+                <div className="break-words rounded-2xl bg-[#f3f6f5] px-3 py-2 text-[#183039]">
+                  {gitForm.extraMessage.trim() || "更新配置"}
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2.5">
+              <button
+                className={secondaryButtonClass}
+                type="button"
+                onClick={() => setConfirmingCommit(false)}
+                disabled={committing}
+              >
+                取消
+              </button>
+              <button
+                className={primaryButtonClass}
+                type="button"
+                onClick={() => void commitAndPush()}
+                disabled={committing}
+              >
+                {committing ? "提交中..." : "确认提交并推送"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header className="mb-6 flex flex-col items-start justify-between gap-6 xl:flex-row">
         <div>
           <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
@@ -1001,7 +1176,7 @@ export default function App(): JSX.Element {
       </header>
 
       <div className="grid gap-[22px] min-[961px]:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className={cn(panelClass, "min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-auto")}>
+        <aside className={cn(panelClass, "min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto")}>
           <div className={panelTitleRowClass}>
             <h2 className="m-0 text-lg">文件列表</h2>
             <button className={secondaryButtonClass} onClick={() => void syncRepository()} disabled={syncing}>
@@ -1034,9 +1209,9 @@ export default function App(): JSX.Element {
                 const fallbackPath =
                   nextEnvironment
                     ? files.find(
-                        (file) =>
-                          getPathWithinRoot(file.path, nextEnvironment.root) !== null
-                      )?.path ?? ""
+                      (file) =>
+                        getPathWithinRoot(file.path, nextEnvironment.root) !== null
+                    )?.path ?? ""
                     : "";
                 setSelectedPath(fallbackPath);
               }}
@@ -1049,32 +1224,28 @@ export default function App(): JSX.Element {
             </select>
           </label>
 
-          <div className="mb-4 grid gap-3 rounded-[20px] bg-[#e8f1f0]/70 px-4 py-3.5">
-            <div>
+          <div className="mb-4 grid min-w-0 gap-3 rounded-[20px] bg-[#e8f1f0]/70 px-4 py-3.5">
+            <div className="min-w-0">
               <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">远程仓库</span>
-              <span className="block break-words text-sm text-[#183039]">{bootstrap?.config.remoteUrl || "-"}</span>
+              <span className="block min-w-0 break-all text-sm text-[#183039]">{bootstrap?.config.remoteUrl || "-"}</span>
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">分支</span>
-              <span className="block break-words text-sm text-[#183039]">{bootstrap?.config.branch || "-"}</span>
+              <span className="block min-w-0 break-all text-sm text-[#183039]">{bootstrap?.config.branch || "-"}</span>
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
-              <span className="block break-words text-sm text-[#183039]">
+              <span className="block min-w-0 break-all text-sm text-[#183039]">
                 {activeEnvironment
                   ? activeEnvironment.root
                   : bootstrap?.config.visibleRoots?.join(" / ") || "-"}
               </span>
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">当前 HEAD</span>
-              <span className="block break-words font-mono text-xs text-[#183039]">{bootstrap?.repoStatus.head || "-"}</span>
+              <span className="block min-w-0 break-all font-mono text-xs text-[#183039]">{bootstrap?.repoStatus.head || "-"}</span>
             </div>
           </div>
-
-          {bootstrap?.repoStatus.lastError ? (
-            <div className="mb-3.5 rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">{bootstrap.repoStatus.lastError}</div>
-          ) : null}
 
           <label className="mb-4 flex min-h-[42px] items-center gap-2 rounded-xl border border-[#dfe4e6] bg-white px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
             <span className="text-2xl font-light leading-none text-[#8b9499]">⌕</span>
@@ -1082,11 +1253,11 @@ export default function App(): JSX.Element {
               className="min-w-0 flex-1 border-0 bg-transparent py-2.5 text-[15px] text-[#24292f] outline-none placeholder:text-[#8b8f93]"
               value={fileQuery}
               onChange={(event) => setFileQuery(event.target.value)}
-              placeholder="Filter files..."
+              placeholder="搜索文件名..."
             />
           </label>
 
-          <div className="-mx-2 rounded-xl bg-[#f1f5f4] px-2 py-2">
+          <div className="-mx-2 min-w-0 overflow-x-hidden rounded-xl bg-[#f1f5f4] px-2 py-2">
             {visibleFiles.length === 0 ? (
               <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
             ) : filteredVisibleFiles.length === 0 ? (
@@ -1129,22 +1300,19 @@ export default function App(): JSX.Element {
                 <button className={secondaryButtonClass} onClick={() => void saveCurrentFile()} disabled={!selectedPath || saving}>
                   {saving ? "暂存中..." : "暂存"}
                 </button>
-                <button className={primaryButtonClass} onClick={() => void commitAndPush()} disabled={!selectedPath || committing}>
-                  {committing ? "提交中..." : "提交并推送"}
+                <button className={primaryButtonClass} onClick={() => setConfirmingCommit(true)} disabled={!selectedPath || committing}>
+                  {committing ? "提交中..." : "提交并推送该文件"}
                 </button>
               </div>
             </div>
 
-            {message ? <div className="mb-3.5 rounded-2xl bg-[#1d8c68]/10 px-3.5 py-3 text-sm text-[#12684d]">{message}</div> : null}
-            {liveNotice ? <div className="mb-3.5 rounded-2xl bg-[#2475b2]/10 px-3.5 py-3 text-sm text-[#18527e]">{liveNotice}</div> : null}
-            {error ? <div className="mb-3.5 rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">{error}</div> : null}
             {fileConflict ? (
               <div className="mb-3.5 grid gap-3 rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <strong>检测到远程冲突</strong>
                     <div className="mt-1 text-[#8d3322]">
-                      远程文件已更新，你的编辑内容已保留在右侧编辑器中。
+                      远程文件已更新，你的编辑内容已保留。
                     </div>
                   </div>
                   <button
@@ -1156,16 +1324,16 @@ export default function App(): JSX.Element {
                       setFileDetail((current) =>
                         current
                           ? {
-                              ...current,
-                              content: fileConflict.remoteContent,
-                              remoteContent: fileConflict.remoteContent,
-                              headContent: fileConflict.remoteContent,
-                              baseHead: fileConflict.remoteHead ?? current.baseHead,
-                              baseBlob: fileConflict.remoteBlob,
-                              remoteHead: fileConflict.remoteHead,
-                              remoteBlob: fileConflict.remoteBlob,
-                              isDirty: false
-                            }
+                            ...current,
+                            content: fileConflict.remoteContent,
+                            remoteContent: fileConflict.remoteContent,
+                            headContent: fileConflict.remoteContent,
+                            baseHead: fileConflict.remoteHead ?? current.baseHead,
+                            baseBlob: fileConflict.remoteBlob,
+                            remoteHead: fileConflict.remoteHead,
+                            remoteBlob: fileConflict.remoteBlob,
+                            isDirty: false
+                          }
                           : current
                       );
                       setFileConflict(null);
@@ -1210,6 +1378,7 @@ export default function App(): JSX.Element {
                   onChange={(event) => {
                     setEditorContent(event.target.value);
                     setEditorDirty(true);
+                    setFileValidationError(null);
                     syncPendingDiffToEditorCursor(event.currentTarget);
                   }}
                   onClick={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
@@ -1219,13 +1388,19 @@ export default function App(): JSX.Element {
                   placeholder="请选择要编辑的文件"
                   disabled={!selectedPath}
                 />
+                {fileValidationError ? (
+                  <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
+                    <strong>格式校验未通过</strong>
+                    <div className="mt-1 break-words text-[#8d3322]">{fileValidationError}</div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
 
           <section className={panelClass}>
             <div className={panelTitleRowClass}>
-              <h2 className="m-0 text-lg">最近一次提交前后对比</h2>
+              <h2 className="m-0 text-lg">最近一次提交对比</h2>
               <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
                 {fileDetail?.lastCommit ? fileDetail.lastCommit.message : "暂无提交记录"}
               </span>
@@ -1233,16 +1408,22 @@ export default function App(): JSX.Element {
 
             {fileDetail?.lastCommit ? (
               <>
-                <div className="mb-3.5 flex flex-wrap gap-x-3.5 gap-y-2.5 text-[13px] text-[#55686f]">
-                  <span>{fileDetail.lastCommit.authorName}</span>
-                  <span>{fileDetail.lastCommit.authorEmail}</span>
-                  <span>{formatTime(fileDetail.lastCommit.committedAt)}</span>
-                  <span className="font-mono text-xs">{fileDetail.lastCommit.hash}</span>
+                <div className="mb-3.5 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
+                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                    {fileDetail.lastCommit.authorName}
+                  </span>
+                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                    {formatTime(fileDetail.lastCommit.committedAt)}
+                  </span>
+                  <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
+                    {fileDetail.lastCommit.hash}
+                  </span>
                 </div>
                 <DiffView
                   before={fileDetail.lastCommit.beforeContent}
                   after={fileDetail.lastCommit.afterContent}
                   emptyText="最近一次提交没有内容变化"
+                  className="max-h-[420px] overflow-auto"
                 />
               </>
             ) : (

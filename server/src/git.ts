@@ -15,6 +15,7 @@ import {
   normalizeVisibleRoots,
   resolveRepoPath
 } from "./config";
+import { validateConfigFileContent } from "./fileValidation";
 import type {
   AppConfig,
   CommitSnapshot,
@@ -603,6 +604,7 @@ export async function writeRepoFile(
   const repoPath = resolveRepoPath(config);
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
   const absolutePath = path.resolve(repoPath, repoRelativePath);
+  validateConfigFileContent(repoRelativePath, content);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, content, "utf8");
   return readFileDetail(config, repoRelativePath);
@@ -676,6 +678,7 @@ export async function commitAndPushFile(
   ].join("\n\n");
 
   const absolutePath = path.resolve(repoPath, repoRelativePath);
+  validateConfigFileContent(repoRelativePath, input.content);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, input.content, "utf8");
 

@@ -11,6 +11,7 @@ import {
   toGitSettingsSummary,
   updateCommitMessagePrefix
 } from "./config";
+import { ConfigFileValidationError } from "./fileValidation";
 import {
   commitAndPushFile,
   FileConflictError,
@@ -274,6 +275,16 @@ app.use(
   (error: unknown, request: Request, response: Response, _next: NextFunction) => {
     if (error instanceof FileConflictError) {
       response.status(error.statusCode).json(error.payload);
+      return;
+    }
+
+    if (error instanceof ConfigFileValidationError) {
+      response.status(error.statusCode).json({
+        type: error.type,
+        fileType: error.fileType,
+        message: error.message,
+        error: error.message
+      });
       return;
     }
 
