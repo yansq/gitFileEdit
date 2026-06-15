@@ -13,15 +13,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --cache /root/.npm --prefer-offline
 
 FROM deps AS build
-COPY tsconfig.base.json vite.config.ts index.html ./
+COPY tsconfig.base.json vite.config.ts tailwind.config.cjs postcss.config.cjs index.html ./
 COPY client ./client
 COPY server ./server
 RUN npm run build
 RUN npm prune --omit=dev
 
 FROM base AS runtime
-RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
+RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json ./package.json
