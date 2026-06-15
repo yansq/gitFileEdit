@@ -2,9 +2,13 @@ import { diffLines } from "diff";
 import {
   startTransition,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject
 } from "react";
 import type {
@@ -26,7 +30,9 @@ interface DiffBlock {
   id: string;
   type: "added" | "removed" | "same";
   marker: "+" | "-" | " ";
-  lines: DiffLine[];
+  line: DiffLine;
+  lineNumber: number;
+  afterLineNumber: number | null;
 }
 
 interface FileTreeNode {
@@ -65,9 +71,11 @@ const inputClass =
   "rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 px-3.5 py-3 outline-none";
 const emptyBlockClass =
   "rounded-[22px] border border-dashed border-[#183039]/15 bg-[#f6f9f7]/85 p-6 text-center text-[#73848a]";
-const codeSurfaceClass =
-  "m-0 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4 font-mono text-[13px] leading-[1.65] whitespace-pre-wrap break-words";
 const editorSurfaceHeightClass = "h-[62vh] min-h-[360px] max-h-[640px] overflow-auto";
+const fileListMinWidth = 260;
+const fileListDefaultWidth = 320;
+const fileListMaxWidth = 560;
+const mainContentMinWidth = 520;
 
 class ApiRequestError extends Error {
   constructor(
@@ -153,6 +161,32 @@ function formatSize(size: number): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function countLines(value: string): number {
+  if (!value) {
+    return 1;
+  }
+
+  let count = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 10) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(Math.max(value, 0), 1);
 }
 
 function normalizePath(value: string): string {
@@ -291,7 +325,7 @@ function FileTreeRow(props: {
 }): JSX.Element {
   const containsSelected = nodeContainsPath(props.node, props.selectedPath);
   const [open, setOpen] = useState(true);
-  const isOpen = props.forceOpen || containsSelected || open;
+  const isOpen = props.forceOpen || open;
   const indent = 6 + props.level * 10;
 
   if (props.node.kind === "directory") {
@@ -395,31 +429,51 @@ function DiffView(props: {
   className?: string;
   showContentWhenUnchanged?: boolean;
   scrollRef?: RefObject<HTMLDivElement>;
+  highlightAfterLine?: number | null;
 }): JSX.Element {
-  const segments = diffLines(props.before, props.after);
-  const diffBlocks: DiffBlock[] = segments.flatMap((segment, index) => {
-    const type = segment.added ? "added" : segment.removed ? "removed" : "same";
-    const marker = segment.added ? "+" : segment.removed ? "-" : " ";
-    const lines = splitDiffLines(segment.value);
-
-    if (type !== "same") {
-      return [
-        {
-          id: `${index}`,
-          type,
-          marker,
-          lines
-        }
-      ];
+  const diffBlocks = useMemo<DiffBlock[]>(() => {
+    if (props.before === props.after) {
+      return splitDiffLines(props.after).map((line, lineIndex): DiffBlock => ({
+        id: `same-${lineIndex}`,
+        type: "same",
+        marker: " ",
+        line,
+        lineNumber: lineIndex + 1,
+        afterLineNumber: lineIndex + 1
+      }));
     }
 
-    return lines.map((line, lineIndex): DiffBlock => ({
-      id: `${index}-${lineIndex}`,
-      type,
-      marker,
-      lines: [line]
-    }));
-  });
+    let beforeLineNumber = 1;
+    let afterLineNumber = 1;
+    const segments = diffLines(props.before, props.after);
+    return segments.flatMap((segment, segmentIndex) => {
+      const type = segment.added ? "added" : segment.removed ? "removed" : "same";
+      const marker = segment.added ? "+" : segment.removed ? "-" : " ";
+      const lines = splitDiffLines(segment.value);
+
+      return lines.map((line, lineIndex): DiffBlock => {
+        const lineNumber = type === "removed" ? beforeLineNumber : afterLineNumber;
+        const nextAfterLineNumber = type === "removed" ? null : afterLineNumber;
+        if (type === "added") {
+          afterLineNumber += 1;
+        } else if (type === "removed") {
+          beforeLineNumber += 1;
+        } else {
+          beforeLineNumber += 1;
+          afterLineNumber += 1;
+        }
+
+        return {
+          id: `${segmentIndex}-${lineIndex}`,
+          type,
+          marker,
+          line,
+          lineNumber,
+          afterLineNumber: nextAfterLineNumber
+        };
+      });
+    });
+  }, [props.before, props.after]);
 
   const hasChange = diffBlocks.some((block) => block.type !== "same");
   const blocks = hasChange || props.showContentWhenUnchanged
@@ -430,23 +484,30 @@ function DiffView(props: {
   }
 
   return (
-    <div ref={props.scrollRef} className={cn("grid auto-rows-min content-start gap-0.5 rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4", props.className)}>
+    <div ref={props.scrollRef} className={cn("grid auto-rows-min content-start gap-0.5 overflow-x-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-2", props.className)}>
       {blocks.map((block) => (
         <div
           key={block.id}
+          data-after-line={block.afterLineNumber ?? undefined}
           className={cn(
-            "grid grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-[10px] px-1.5 py-1",
+            "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-[10px] px-1 py-1",
+            props.highlightAfterLine !== null &&
+            props.highlightAfterLine !== undefined &&
+            block.afterLineNumber === props.highlightAfterLine &&
+            block.type === "same" &&
+            "bg-[#d8a21b]/20",
             block.type === "added" && "bg-[#1d8c68]/10",
             block.type === "removed" && "bg-[#c94a35]/10"
           )}
         >
-          <span className="font-mono text-[#4a5b61]">{block.marker}</span>
-          <span className="grid gap-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.65]">
-            {block.lines.map((line, lineIndex) => (
-              <span key={lineIndex}>
-                <VisibleWhitespace text={line.text} hasNewline={line.hasNewline} />
-              </span>
-            ))}
+          <span className="select-none text-right font-mono text-[12px] leading-[1.65] text-[#8b9aa1]">
+            {block.lineNumber}
+          </span>
+          <span className="font-mono text-[13px] leading-[1.65] text-[#4a5b61]">{block.marker}</span>
+          <span className="grid min-w-0 gap-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.65]">
+            <span className="min-w-0">
+              <VisibleWhitespace text={block.line.text} hasNewline={block.line.hasNewline} />
+            </span>
           </span>
         </div>
       ))}
@@ -503,6 +564,10 @@ function VisibleWhitespace(props: { text: string; hasNewline: boolean }): JSX.El
 
 export default function App(): JSX.Element {
   const pendingDiffRef = useRef<HTMLDivElement>(null);
+  const editorLineNumbersRef = useRef<HTMLDivElement>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorLineMeasureRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
   const [fileQuery, setFileQuery] = useState("");
@@ -518,11 +583,20 @@ export default function App(): JSX.Element {
   const [settingsSeeded, setSettingsSeeded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [confirmingCommit, setConfirmingCommit] = useState(false);
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string>("");
   const [restoringHash, setRestoringHash] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [showRepoDetails, setShowRepoDetails] = useState(false);
+  const [fileListWidth, setFileListWidth] = useState(fileListDefaultWidth);
+  const [resizingFileList, setResizingFileList] = useState(false);
+  const [editorLineOffsets, setEditorLineOffsets] = useState<number[]>([16]);
+  const [editorLineNumbersHeight, setEditorLineNumbersHeight] = useState(0);
+  const [editorMeasureWidth, setEditorMeasureWidth] = useState<number | null>(null);
+  const [currentEditorLine, setCurrentEditorLine] = useState(1);
+  const [editorScrollTop, setEditorScrollTop] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveNotice, setLiveNotice] = useState<string | null>(null);
@@ -543,6 +617,8 @@ export default function App(): JSX.Element {
     setFileDetail(null);
     setEditorContent("");
     setEditorDirty(false);
+    setCurrentEditorLine(1);
+    setEditorScrollTop(0);
     setFileConflict(null);
     setFileValidationError(null);
     setLiveNotice(null);
@@ -574,24 +650,105 @@ export default function App(): JSX.Element {
     diffElement.scrollTop = Math.max(0, Math.min(maxScrollTop, maxScrollTop * ratio));
   }
 
+  function findEditorLineAtScrollTop(scrollTop: number): number {
+    if (editorLineOffsets.length <= 1) {
+      return 1;
+    }
+
+    let low = 0;
+    let high = editorLineOffsets.length - 1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (editorLineOffsets[middle] <= scrollTop + 1) {
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+
+    return Math.max(1, high + 1);
+  }
+
+  function scrollPendingDiffToEditorLine(
+    lineNumber: number,
+    options: { viewportTop?: number; lineProgress?: number } = {}
+  ): boolean {
+    const diffElement = pendingDiffRef.current;
+    if (!diffElement) {
+      return false;
+    }
+
+    const target = diffElement.querySelector<HTMLElement>(`[data-after-line="${lineNumber}"]`);
+    if (!target) {
+      return false;
+    }
+
+    const maxScrollTop = diffElement.scrollHeight - diffElement.clientHeight;
+    const viewportTop = options.viewportTop ?? 8;
+    const lineProgress = clampRatio(options.lineProgress ?? 0);
+    const diffRect = diffElement.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetTop = targetRect.top - diffRect.top + diffElement.scrollTop;
+    diffElement.scrollTop = Math.max(
+      0,
+      Math.min(maxScrollTop, targetTop + targetRect.height * lineProgress - viewportTop)
+    );
+    return true;
+  }
+
   function syncPendingDiffToEditorCursor(textarea: HTMLTextAreaElement): void {
     window.requestAnimationFrame(() => {
       const textBeforeCursor = textarea.value.slice(0, textarea.selectionStart);
-      const cursorLineIndex = textBeforeCursor.split("\n").length - 1;
-      const totalLines = Math.max(textarea.value.split("\n").length, 1);
-      const ratio = totalLines <= 1 ? 0 : cursorLineIndex / (totalLines - 1);
-      scrollPendingDiffToRatio(ratio);
+      const cursorLineIndex = countLines(textBeforeCursor) - 1;
+      setCurrentEditorLine(cursorLineIndex + 1);
+      const cursorLineTop = editorLineOffsets[cursorLineIndex] ?? 16;
+      const cursorViewportTop = clampNumber(
+        cursorLineTop - textarea.scrollTop,
+        0,
+        Math.max(0, textarea.clientHeight - 28)
+      );
+      if (
+        !scrollPendingDiffToEditorLine(cursorLineIndex + 1, {
+          viewportTop: cursorViewportTop
+        })
+      ) {
+        const totalLines = countLines(textarea.value);
+        const ratio = totalLines <= 1 ? 0 : cursorLineIndex / (totalLines - 1);
+        scrollPendingDiffToRatio(ratio);
+      }
     });
   }
 
   function syncPendingDiffToEditorScroll(textarea: HTMLTextAreaElement): void {
-    const maxScrollTop = textarea.scrollHeight - textarea.clientHeight;
-    if (maxScrollTop <= 0) {
-      scrollPendingDiffToRatio(0);
+    setEditorScrollTop(textarea.scrollTop);
+    if (editorLineNumbersRef.current) {
+      editorLineNumbersRef.current.scrollTop = textarea.scrollTop;
+    }
+
+    const lineNumber = findEditorLineAtScrollTop(textarea.scrollTop);
+    const lineIndex = lineNumber - 1;
+    const lineTop = editorLineOffsets[lineIndex] ?? 0;
+    const nextLineTop = editorLineOffsets[lineIndex + 1] ?? editorLineNumbersHeight;
+    const lineHeight = Math.max(1, nextLineTop - lineTop);
+    const lineProgress = clampRatio((textarea.scrollTop - lineTop) / lineHeight);
+    if (!scrollPendingDiffToEditorLine(lineNumber, { viewportTop: 0, lineProgress })) {
+      const maxScrollTop = textarea.scrollHeight - textarea.clientHeight;
+      if (maxScrollTop <= 0) {
+        scrollPendingDiffToRatio(0);
+        return;
+      }
+
+      scrollPendingDiffToRatio(textarea.scrollTop / maxScrollTop);
+    }
+  }
+
+  function startFileListResize(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (window.matchMedia("(max-width: 960px)").matches) {
       return;
     }
 
-    scrollPendingDiffToRatio(textarea.scrollTop / maxScrollTop);
+    event.preventDefault();
+    setResizingFileList(true);
   }
 
   async function refreshBootstrap(preferredPath?: string, preserveForm = true): Promise<void> {
@@ -630,6 +787,8 @@ export default function App(): JSX.Element {
         setFileDetail(null);
         setEditorContent("");
         setEditorDirty(false);
+        setCurrentEditorLine(1);
+        setEditorScrollTop(0);
         setFileConflict(null);
         setFileValidationError(null);
       });
@@ -645,6 +804,8 @@ export default function App(): JSX.Element {
       if (!preserveDraft || !editorDirty) {
         setEditorContent(detail.content);
         setEditorDirty(false);
+        setCurrentEditorLine(1);
+        setEditorScrollTop(0);
         setFileConflict(null);
         setFileValidationError(null);
       }
@@ -771,6 +932,77 @@ export default function App(): JSX.Element {
     };
   }, [authUser, error]);
 
+  useLayoutEffect(() => {
+    const measureElement = editorLineMeasureRef.current;
+    const textareaElement = editorTextareaRef.current;
+    if (!measureElement || !textareaElement) {
+      return;
+    }
+
+    const updateLineMetrics = (): void => {
+      setEditorMeasureWidth(textareaElement.clientWidth);
+      const lineElements = Array.from(
+        measureElement.querySelectorAll<HTMLElement>("[data-editor-line]")
+      );
+      setEditorLineOffsets(
+        lineElements.length ? lineElements.map((item) => item.offsetTop) : [16]
+      );
+      setEditorLineNumbersHeight(measureElement.scrollHeight);
+    };
+
+    updateLineMetrics();
+    const resizeObserver = new ResizeObserver(updateLineMetrics);
+    resizeObserver.observe(measureElement);
+    resizeObserver.observe(textareaElement);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [editorContent, fileListWidth]);
+
+  useEffect(() => {
+    if (!resizingFileList) {
+      return;
+    }
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handlePointerMove(event: PointerEvent): void {
+      const layoutElement = layoutRef.current;
+      if (!layoutElement) {
+        return;
+      }
+
+      const rect = layoutElement.getBoundingClientRect();
+      const maxWidth = Math.max(
+        fileListMinWidth,
+        Math.min(fileListMaxWidth, rect.width - mainContentMinWidth - 22)
+      );
+      setFileListWidth(
+        clampNumber(event.clientX - rect.left, fileListMinWidth, maxWidth)
+      );
+    }
+
+    function stopResizing(): void {
+      setResizingFileList(false);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [resizingFileList]);
+
   async function saveCurrentFile(): Promise<void> {
     if (!selectedPath) {
       return;
@@ -812,6 +1044,55 @@ export default function App(): JSX.Element {
       setError((saveError as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function discardCurrentFile(): Promise<void> {
+    if (!selectedPath) {
+      return;
+    }
+
+    if (!editorDirty && !fileDetail?.isDirty) {
+      setMessage("当前文件没有可丢弃的修改");
+      setError(null);
+      return;
+    }
+
+    if (!window.confirm("确认丢弃当前文件的未提交修改？编辑区内容和已暂存到工作区的修改都会恢复到当前 HEAD。")) {
+      return;
+    }
+
+    setDiscarding(true);
+    setError(null);
+    setMessage(null);
+    setFileConflict(null);
+    setFileValidationError(null);
+
+    try {
+      const detail = await requestJson<FileDetail>("/api/file/discard", {
+        method: "POST",
+        body: JSON.stringify({
+          path: selectedPath
+        })
+      });
+
+      startTransition(() => {
+        setFileDetail(detail);
+        setEditorContent(detail.content);
+        setEditorDirty(false);
+        setCurrentEditorLine(1);
+        setEditorScrollTop(0);
+      });
+      setSelectedHistoryHash(detail.history[0]?.hash ?? "");
+      setMessage("已丢弃当前文件的未提交修改");
+      await refreshBootstrap(selectedPath);
+    } catch (discardError) {
+      if (handleAuthRequired(discardError)) {
+        return;
+      }
+      setError((discardError as Error).message);
+    } finally {
+      setDiscarding(false);
     }
   }
 
@@ -1032,34 +1313,69 @@ export default function App(): JSX.Element {
   const environmentOptions = bootstrap?.config.environments ?? [];
   const activeEnvironment =
     environmentOptions.find((item) => item.id === selectedEnvironment) ?? environmentOptions[0];
-  const environmentFiles = activeEnvironment
-    ? files.filter((file) => getPathWithinRoot(file.path, activeEnvironment.root) !== null)
-    : files;
+  const displayRoot =
+    activeEnvironment
+      ? activeEnvironment.root
+      : bootstrap?.config.visibleRoots?.join(" / ") || "-";
+  const repoHead = bootstrap?.repoStatus.head ?? null;
+  const remoteUrl = bootstrap?.config.remoteUrl || "-";
+  const environmentFiles = useMemo(
+    () =>
+      activeEnvironment
+        ? files.filter((file) => getPathWithinRoot(file.path, activeEnvironment.root) !== null)
+        : files,
+    [activeEnvironment, files]
+  );
   const visibleFiles = environmentFiles;
   const normalizedFileQuery = fileQuery.trim().toLocaleLowerCase();
-  const filteredVisibleFiles = normalizedFileQuery
-    ? visibleFiles.filter((file) => {
-      const relativePath =
-        activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
-      const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
-      return searchTarget.includes(normalizedFileQuery);
-    })
-    : visibleFiles;
-  const fileTree =
-    activeEnvironment
-      ? buildFileTree(
-        filteredVisibleFiles,
-        (file) => getPathWithinRoot(file.path, activeEnvironment.root),
-        activeEnvironment.root
-      )
-      : [];
+  const filteredVisibleFiles = useMemo(
+    () =>
+      normalizedFileQuery
+        ? visibleFiles.filter((file) => {
+          const relativePath =
+            activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
+          const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
+          return searchTarget.includes(normalizedFileQuery);
+        })
+        : visibleFiles,
+    [activeEnvironment, normalizedFileQuery, visibleFiles]
+  );
+  const fileTree = useMemo(
+    () =>
+      activeEnvironment
+        ? buildFileTree(
+          filteredVisibleFiles,
+          (file) => getPathWithinRoot(file.path, activeEnvironment.root),
+          activeEnvironment.root
+        )
+        : [],
+    [activeEnvironment, filteredVisibleFiles]
+  );
   const repoReady = bootstrap?.repoStatus.ready ?? false;
   const pendingBaseContent = fileDetail?.headContent ?? "";
   const pendingContent = editorDirty ? editorContent : fileDetail?.content ?? "";
   const hasPendingChanges = Boolean(selectedPath) && pendingBaseContent !== pendingContent;
+  const canDiscardCurrentFile =
+    Boolean(selectedPath) &&
+    !saving &&
+    !committing &&
+    (editorDirty || Boolean(fileDetail?.isDirty));
   const fileHistory = fileDetail?.history ?? [];
   const selectedHistory =
     fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
+  const editorLines = useMemo(() => editorContent.split("\n"), [editorContent]);
+  const editorLineNumbers = useMemo(
+    () => Array.from({ length: Math.max(editorLines.length, 1) }, (_, index) => index + 1),
+    [editorLines.length]
+  );
+  const currentEditorLineIndex = Math.max(0, Math.min(currentEditorLine - 1, editorLineOffsets.length - 1));
+  const currentEditorLineTop = editorLineOffsets[currentEditorLineIndex] ?? 16;
+  const currentEditorLineNextTop =
+    editorLineOffsets[currentEditorLineIndex + 1] ?? editorLineNumbersHeight;
+  const currentEditorLineHeight = Math.max(20, currentEditorLineNextTop - currentEditorLineTop);
+  const workspaceLayoutStyle = {
+    "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`
+  } as CSSProperties;
 
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
@@ -1274,8 +1590,12 @@ export default function App(): JSX.Element {
         </div>
       </header>
 
-      <div className="grid gap-[22px] min-[961px]:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className={cn(panelClass, "min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto")}>
+      <div
+        ref={layoutRef}
+        className="grid gap-[22px] min-[961px]:grid-cols-[var(--file-list-grid)]"
+        style={workspaceLayoutStyle}
+      >
+        <aside className={cn(panelClass, "relative min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto")}>
           <div className={panelTitleRowClass}>
             <h2 className="m-0 text-lg">文件列表</h2>
             <button className={secondaryButtonClass} onClick={() => void syncRepository()} disabled={syncing}>
@@ -1323,31 +1643,65 @@ export default function App(): JSX.Element {
             </select>
           </label>
 
-          <div className="mb-4 grid min-w-0 gap-3 rounded-[20px] bg-[#e8f1f0]/70 px-4 py-3.5">
-            <div className="min-w-0">
-              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">远程仓库</span>
-              <span className="block min-w-0 break-all text-sm text-[#183039]">{bootstrap?.config.remoteUrl || "-"}</span>
-            </div>
-            <div className="min-w-0">
-              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">分支</span>
-              <span className="block min-w-0 break-all text-sm text-[#183039]">{bootstrap?.config.branch || "-"}</span>
-            </div>
-            <div className="min-w-0">
-              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
-              <span className="block min-w-0 break-all text-sm text-[#183039]">
-                {activeEnvironment
-                  ? activeEnvironment.root
-                  : bootstrap?.config.visibleRoots?.join(" / ") || "-"}
+          <div className="mb-3 min-w-0 rounded-2xl bg-[#e8f1f0]/70 px-3 py-2">
+            <div className="flex min-h-[34px] min-w-0 items-center gap-2">
+              <span
+                className="min-w-0 flex-1 truncate text-sm text-[#183039]"
+                title={remoteUrl}
+              >
+                {remoteUrl}
               </span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full bg-white/70 px-3 py-1.5 text-xs text-[#315159] transition hover:bg-white"
+                onClick={() => setShowRepoDetails((current) => !current)}
+              >
+                {showRepoDetails ? "收起" : "详情"}
+              </button>
             </div>
-            <div className="min-w-0">
-              <span className="mb-1 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">当前 HEAD</span>
-              <span className="block min-w-0 break-all font-mono text-xs text-[#183039]">{bootstrap?.repoStatus.head || "-"}</span>
-            </div>
+
+            {showRepoDetails ? (
+              <div className="mt-2 grid min-w-0 gap-2 border-t border-[#183039]/10 pt-2 text-sm">
+                <div className="min-w-0">
+                  <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">远程仓库</span>
+                  <span className="block min-w-0 break-all text-[#183039]">{remoteUrl}</span>
+                </div>
+                <div className="grid min-w-0 grid-cols-2 gap-2">
+                  <div className="min-w-0">
+                    <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">分支</span>
+                    <span className="block min-w-0 truncate text-[#183039]" title={bootstrap?.config.branch || "-"}>
+                      {bootstrap?.config.branch || "-"}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">当前 HEAD</span>
+                    <span className="block min-w-0 truncate font-mono text-xs text-[#183039]" title={repoHead || "-"}>
+                      {repoHead || "-"}
+                    </span>
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
+                  <span className="block min-w-0 break-all text-[#183039]">{displayRoot}</span>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <label className="mb-4 flex min-h-[42px] items-center gap-2 rounded-xl border border-[#dfe4e6] bg-white px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-            <span className="text-2xl font-light leading-none text-[#8b9499]">⌕</span>
+            <svg
+              className="h-[18px] w-[18px] shrink-0 text-[#8b9499]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="6.5" />
+              <path d="m16 16 4 4" />
+            </svg>
             <input
               className="min-w-0 flex-1 border-0 bg-transparent py-2.5 text-[15px] text-[#24292f] outline-none placeholder:text-[#8b8f93]"
               value={fileQuery}
@@ -1370,6 +1724,22 @@ export default function App(): JSX.Element {
               />
             )}
           </div>
+          <button
+            type="button"
+            aria-label="拖动调整文件列表宽度"
+            className={cn(
+              "absolute inset-y-4 right-0 hidden w-3 cursor-col-resize touch-none rounded-full transition min-[961px]:block",
+              resizingFileList ? "bg-[#0e6b72]/15" : "hover:bg-[#0e6b72]/10"
+            )}
+            onPointerDown={startFileListResize}
+          >
+            <span
+              className={cn(
+                "absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full transition",
+                resizingFileList ? "bg-[#0e6b72]/70" : "bg-[#183039]/15"
+              )}
+            />
+          </button>
         </aside>
 
         <main className="grid gap-[22px]">
@@ -1383,7 +1753,7 @@ export default function App(): JSX.Element {
                   </span>
                 </div>
               </div>
-              <div className="grid gap-2.5 sm:grid-cols-[minmax(220px,1fr)_auto_auto]">
+              <div className="grid gap-2.5 sm:grid-cols-[minmax(220px,1fr)_auto_auto_auto]">
                 <textarea
                   className={cn(inputClass, "min-h-[46px] resize-y py-2.5 text-sm")}
                   rows={1}
@@ -1396,10 +1766,25 @@ export default function App(): JSX.Element {
                     }))
                   }
                 />
-                <button className={secondaryButtonClass} onClick={() => void saveCurrentFile()} disabled={!selectedPath || saving}>
+                <button
+                  className={secondaryButtonClass}
+                  onClick={() => void discardCurrentFile()}
+                  disabled={!canDiscardCurrentFile || discarding}
+                >
+                  {discarding ? "丢弃中..." : "丢弃修改"}
+                </button>
+                <button
+                  className={secondaryButtonClass}
+                  onClick={() => void saveCurrentFile()}
+                  disabled={!selectedPath || saving || discarding}
+                >
                   {saving ? "暂存中..." : "暂存"}
                 </button>
-                <button className={primaryButtonClass} onClick={() => setConfirmingCommit(true)} disabled={!selectedPath || committing}>
+                <button
+                  className={primaryButtonClass}
+                  onClick={() => setConfirmingCommit(true)}
+                  disabled={!selectedPath || committing || discarding}
+                >
                   {committing ? "提交中..." : "提交并推送该文件"}
                 </button>
               </div>
@@ -1420,6 +1805,8 @@ export default function App(): JSX.Element {
                     onClick={() => {
                       setEditorContent(fileConflict.remoteContent);
                       setEditorDirty(false);
+                      setCurrentEditorLine(1);
+                      setEditorScrollTop(0);
                       setFileDetail((current) =>
                         current
                           ? {
@@ -1466,27 +1853,72 @@ export default function App(): JSX.Element {
                   className={editorSurfaceHeightClass}
                   scrollRef={pendingDiffRef}
                   showContentWhenUnchanged
+                  highlightAfterLine={currentEditorLine}
                 />
               </div>
 
               <div className="grid content-start gap-3">
                 <div className="flex min-h-[32px] items-center font-bold text-[#20404a]">在线编辑</div>
-                <textarea
-                  className={cn(codeSurfaceClass, editorSurfaceHeightClass, "w-full resize-none outline-none")}
-                  value={editorContent}
-                  onChange={(event) => {
-                    setEditorContent(event.target.value);
-                    setEditorDirty(true);
-                    setFileValidationError(null);
-                    syncPendingDiffToEditorCursor(event.currentTarget);
-                  }}
-                  onClick={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                  onKeyUp={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                  onSelect={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                  onScroll={(event) => syncPendingDiffToEditorScroll(event.currentTarget)}
-                  placeholder="请选择要编辑的文件"
-                  disabled={!selectedPath}
-                />
+                <div className={cn("grid grid-cols-[28px_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
+                  <div
+                    ref={editorLineNumbersRef}
+                    className="relative select-none overflow-hidden border-r border-[#183039]/10 bg-[#eef4f3]/70 px-1 text-right font-mono text-[12px] leading-[1.65] text-[#8b9aa1]"
+                    aria-hidden="true"
+                  >
+                    <div className="relative" style={{ height: `${editorLineNumbersHeight}px` }}>
+                      {editorLineNumbers.map((lineNumber, index) => (
+                        <div
+                          key={lineNumber}
+                          className="absolute right-1"
+                          style={{ top: `${editorLineOffsets[index] ?? 16}px` }}
+                        >
+                          {lineNumber}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="relative h-full min-w-0">
+                    {selectedPath ? (
+                      <div
+                        className="pointer-events-none absolute left-0 right-0 rounded-lg bg-[#1d8c68]/10"
+                        style={{
+                          top: `${currentEditorLineTop - editorScrollTop}px`,
+                          height: `${currentEditorLineHeight}px`
+                        }}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    <div
+                      ref={editorLineMeasureRef}
+                      className="pointer-events-none invisible absolute left-0 top-0 overflow-hidden whitespace-pre-wrap break-words py-4 pl-3 pr-4 font-mono text-[13px] leading-[1.65]"
+                      style={editorMeasureWidth ? { width: `${editorMeasureWidth}px` } : undefined}
+                      aria-hidden="true"
+                    >
+                      {editorLines.map((line, index) => (
+                        <div key={index} data-editor-line className="min-h-[1.65em]">
+                          {line || " "}
+                        </div>
+                      ))}
+                    </div>
+                    <textarea
+                      ref={editorTextareaRef}
+                      className="relative h-full w-full resize-none overflow-auto border-0 bg-transparent py-4 pl-3 pr-4 font-mono text-[13px] leading-[1.65] text-[#183039] outline-none placeholder:text-[#8b9aa1] disabled:cursor-not-allowed disabled:opacity-60"
+                      value={editorContent}
+                      onChange={(event) => {
+                        setEditorContent(event.target.value);
+                        setEditorDirty(true);
+                        setFileValidationError(null);
+                        syncPendingDiffToEditorCursor(event.currentTarget);
+                      }}
+                      onClick={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
+                      onKeyUp={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
+                      onSelect={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
+                      onScroll={(event) => syncPendingDiffToEditorScroll(event.currentTarget)}
+                      placeholder="请选择要编辑的文件"
+                      disabled={!selectedPath}
+                    />
+                  </div>
+                </div>
                 {fileValidationError ? (
                   <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
                     <strong>格式校验未通过</strong>
@@ -1498,7 +1930,7 @@ export default function App(): JSX.Element {
           </section>
 
           <section className={panelClass}>
-            <div className={panelTitleRowClass}>
+            <div className="mb-4 flex flex-wrap items-center gap-3">
               <h2 className="m-0 text-lg">文件历史记录</h2>
               <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
                 {fileHistory.length ? `最近 ${fileHistory.length} 次提交` : "暂无提交记录"}
