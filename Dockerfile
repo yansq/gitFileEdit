@@ -31,6 +31,7 @@ COPY scripts/create-user.cjs ./scripts/create-user.cjs
 COPY scripts/docker-entrypoint.cjs ./scripts/docker-entrypoint.cjs
 ENV NODE_ENV=production
 ENV PORT=8090
+ENV APP_SESSION_SECRET=abcdef123
 EXPOSE 8090
 ENTRYPOINT ["node", "/app/scripts/docker-entrypoint.cjs"]
 CMD ["node", "dist/server/index.js"]
