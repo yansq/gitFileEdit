@@ -1,8 +1,18 @@
 import { diffLines } from "diff";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { Compartment, EditorState } from "@codemirror/state";
+import {
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+  placeholder,
+  type ViewUpdate
+} from "@codemirror/view";
 import {
   startTransition,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -76,6 +86,56 @@ const fileListMinWidth = 260;
 const fileListDefaultWidth = 320;
 const fileListMaxWidth = 560;
 const mainContentMinWidth = 520;
+const diffPreviewDebounceMs = 280;
+const largeDiffPreviewThreshold = 200 * 1024;
+const diffLineAlignmentOffset = -3;
+const configEditorTheme = EditorView.theme(
+  {
+    "&": {
+      background: "transparent",
+      color: "#183039",
+      height: "100%"
+    },
+    "&.cm-focused": {
+      outline: "none"
+    },
+    ".cm-scroller": {
+      fontFamily:
+        '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+      fontSize: "13px",
+      lineHeight: "1.65",
+      overflow: "auto"
+    },
+    ".cm-content": {
+      caretColor: "#0e6b72",
+      minHeight: "100%",
+      padding: "16px 16px 16px 12px"
+    },
+    ".cm-line": {
+      padding: "0"
+    },
+    ".cm-gutters": {
+      backgroundColor: "rgba(238, 244, 243, 0.7)",
+      borderRight: "1px solid rgba(24, 48, 57, 0.1)",
+      color: "#8b9aa1"
+    },
+    ".cm-lineNumbers .cm-gutterElement": {
+      minWidth: "22px",
+      padding: "0 4px 0 2px"
+    },
+    ".cm-activeLine": {
+      backgroundColor: "rgba(29, 140, 104, 0.1)"
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "rgba(29, 140, 104, 0.08)",
+      color: "#315159"
+    },
+    ".cm-placeholder": {
+      color: "#8b9aa1"
+    }
+  },
+  { dark: false }
+);
 
 class ApiRequestError extends Error {
   constructor(
@@ -533,40 +593,169 @@ function splitDiffLines(value: string): DiffLine[] {
 }
 
 function VisibleWhitespace(props: { text: string; hasNewline: boolean }): JSX.Element {
-  const characters = Array.from(props.text);
+  const visibleText = props.text.replace(/ /g, "·").replace(/\t/g, "⇥");
 
   return (
     <>
-      {characters.length === 0 && !props.hasNewline ? " " : null}
-      {characters.map((character, index) => {
-        if (character === " ") {
-          return (
-            <span key={index} className="text-[#84969c]">
-              ·
-            </span>
-          );
-        }
-
-        if (character === "\t") {
-          return (
-            <span key={index} className="text-[#84969c]">
-              ⇥
-            </span>
-          );
-        }
-
-        return <span key={index}>{character}</span>;
-      })}
+      {visibleText || (!props.hasNewline ? " " : null)}
       {props.hasNewline ? <span className="ml-1 text-[#84969c]">↵</span> : null}
     </>
   );
 }
 
+function ConfigEditor(props: {
+  value: string;
+  disabled: boolean;
+  placeholderText: string;
+  onChange: (view: EditorView) => void;
+  onViewReady: (view: EditorView | null) => void;
+  onCursorLineChange: (lineNumber: number, viewportTop: number, lineProgress: number) => void;
+  onViewportLineChange: (lineNumber: number, viewportTop: number, lineProgress: number) => void;
+}): JSX.Element {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const valueRef = useRef(props.value);
+  const applyingExternalValueRef = useRef(false);
+  const disabledCompartmentRef = useRef(new Compartment());
+  const onChangeRef = useRef(props.onChange);
+  const onCursorLineChangeRef = useRef(props.onCursorLineChange);
+  const onViewportLineChangeRef = useRef(props.onViewportLineChange);
+
+  useEffect(() => {
+    onChangeRef.current = props.onChange;
+    onCursorLineChangeRef.current = props.onCursorLineChange;
+    onViewportLineChangeRef.current = props.onViewportLineChange;
+  }, [props.onChange, props.onCursorLineChange, props.onViewportLineChange]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    function reportViewportLine(view: EditorView): void {
+      const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+      const line = view.state.doc.lineAt(block.from);
+      const blockHeight = Math.max(1, block.height);
+      const lineProgress = clampRatio((view.scrollDOM.scrollTop - block.top) / blockHeight);
+      onViewportLineChangeRef.current(
+        line.number,
+        Math.max(0, block.top - view.scrollDOM.scrollTop),
+        lineProgress
+      );
+    }
+
+    function reportCursorLine(view: EditorView): void {
+      const head = view.state.selection.main.head;
+      const block = view.lineBlockAt(head);
+      const line = view.state.doc.lineAt(head);
+      const lineTop =
+        view.coordsAtPos(line.from)?.top ??
+        view.scrollDOM.getBoundingClientRect().top + block.top - view.scrollDOM.scrollTop;
+      onCursorLineChangeRef.current(
+        line.number,
+        Math.max(0, lineTop - view.scrollDOM.getBoundingClientRect().top),
+        0
+      );
+    }
+
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: props.value,
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          highlightActiveLine(),
+          history(),
+          keymap.of([...defaultKeymap, ...historyKeymap]),
+          placeholder(props.placeholderText),
+          configEditorTheme,
+          disabledCompartmentRef.current.of([
+            EditorState.readOnly.of(props.disabled),
+            EditorView.editable.of(!props.disabled)
+          ]),
+          EditorView.lineWrapping,
+          EditorView.updateListener.of((update: ViewUpdate) => {
+            if (update.docChanged) {
+              let nextValue = valueRef.current;
+              update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+                nextValue = `${nextValue.slice(0, fromA)}${inserted.toString()}${nextValue.slice(toA)}`;
+              });
+              valueRef.current = nextValue;
+              if (!applyingExternalValueRef.current) {
+                onChangeRef.current(update.view);
+              }
+            }
+            if (update.docChanged || update.selectionSet) {
+              reportCursorLine(update.view);
+            }
+          })
+        ]
+      })
+    });
+
+    viewRef.current = view;
+    valueRef.current = props.value;
+    props.onViewReady(view);
+    reportCursorLine(view);
+
+    const handleScroll = (): void => {
+      reportViewportLine(view);
+    };
+    view.scrollDOM.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      view.scrollDOM.removeEventListener("scroll", handleScroll);
+      props.onViewReady(null);
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || props.value === valueRef.current) {
+      return;
+    }
+
+    valueRef.current = props.value;
+    applyingExternalValueRef.current = true;
+    try {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: props.value
+        }
+      });
+    } finally {
+      applyingExternalValueRef.current = false;
+    }
+  }, [props.value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: disabledCompartmentRef.current.reconfigure([
+        EditorState.readOnly.of(props.disabled),
+        EditorView.editable.of(!props.disabled)
+      ])
+    });
+  }, [props.disabled]);
+
+  return <div ref={hostRef} className="h-full min-w-0" />;
+}
+
 export default function App(): JSX.Element {
   const pendingDiffRef = useRef<HTMLDivElement>(null);
-  const editorLineNumbersRef = useRef<HTMLDivElement>(null);
-  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const editorLineMeasureRef = useRef<HTMLDivElement>(null);
+  const editorViewRef = useRef<EditorView | null>(null);
+  const diffPreviewTimerRef = useRef<number | null>(null);
+  const isLargeDiffPreviewRef = useRef(false);
   const layoutRef = useRef<HTMLDivElement>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
@@ -574,7 +763,10 @@ export default function App(): JSX.Element {
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
   const [editorContent, setEditorContent] = useState("");
+  const [diffPreviewContent, setDiffPreviewContent] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
+  const [isLargeDiffPreview, setIsLargeDiffPreview] = useState(false);
+  const [isDiffPreviewStale, setIsDiffPreviewStale] = useState(false);
   const [fileConflict, setFileConflict] = useState<FileConflictPayload | null>(null);
   const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const [gitForm, setGitForm] = useState({
@@ -592,11 +784,7 @@ export default function App(): JSX.Element {
   const [showRepoDetails, setShowRepoDetails] = useState(false);
   const [fileListWidth, setFileListWidth] = useState(fileListDefaultWidth);
   const [resizingFileList, setResizingFileList] = useState(false);
-  const [editorLineOffsets, setEditorLineOffsets] = useState<number[]>([16]);
-  const [editorLineNumbersHeight, setEditorLineNumbersHeight] = useState(0);
-  const [editorMeasureWidth, setEditorMeasureWidth] = useState<number | null>(null);
   const [currentEditorLine, setCurrentEditorLine] = useState(1);
-  const [editorScrollTop, setEditorScrollTop] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveNotice, setLiveNotice] = useState<string | null>(null);
@@ -616,9 +804,12 @@ export default function App(): JSX.Element {
     setSelectedPath("");
     setFileDetail(null);
     setEditorContent("");
+    setDiffPreviewContent("");
     setEditorDirty(false);
+    setIsDiffPreviewStale(false);
+    clearDiffPreviewTimer();
+    setLargeDiffPreviewMode(false);
     setCurrentEditorLine(1);
-    setEditorScrollTop(0);
     setFileConflict(null);
     setFileValidationError(null);
     setLiveNotice(null);
@@ -636,6 +827,49 @@ export default function App(): JSX.Element {
     return false;
   }
 
+  function clearDiffPreviewTimer(): void {
+    if (diffPreviewTimerRef.current !== null) {
+      window.clearTimeout(diffPreviewTimerRef.current);
+      diffPreviewTimerRef.current = null;
+    }
+  }
+
+  function getLatestEditorContent(): string {
+    return editorViewRef.current?.state.doc.toString() ?? editorContent;
+  }
+
+  function setLargeDiffPreviewMode(nextValue: boolean): void {
+    if (isLargeDiffPreviewRef.current === nextValue) {
+      return;
+    }
+
+    isLargeDiffPreviewRef.current = nextValue;
+    setIsLargeDiffPreview(nextValue);
+  }
+
+  function updateLargeDiffPreviewMode(contentLength: number): boolean {
+    const nextValue = pendingBaseContent.length + contentLength > largeDiffPreviewThreshold;
+    setLargeDiffPreviewMode(nextValue);
+    return nextValue;
+  }
+
+  function scheduleDiffPreviewUpdate(view: EditorView): void {
+    const nextIsLarge = updateLargeDiffPreviewMode(view.state.doc.length);
+    clearDiffPreviewTimer();
+    if (nextIsLarge) {
+      return;
+    }
+
+    diffPreviewTimerRef.current = window.setTimeout(() => {
+      diffPreviewTimerRef.current = null;
+      const nextContent = view.state.doc.toString();
+      startTransition(() => {
+        setDiffPreviewContent(nextContent);
+        setIsDiffPreviewStale(false);
+      });
+    }, diffPreviewDebounceMs);
+  }
+
   function scrollPendingDiffToRatio(ratio: number): void {
     const diffElement = pendingDiffRef.current;
     if (!diffElement) {
@@ -650,23 +884,16 @@ export default function App(): JSX.Element {
     diffElement.scrollTop = Math.max(0, Math.min(maxScrollTop, maxScrollTop * ratio));
   }
 
-  function findEditorLineAtScrollTop(scrollTop: number): number {
-    if (editorLineOffsets.length <= 1) {
-      return 1;
+  function getDiffViewportTop(viewportTop: number): number {
+    const diffElement = pendingDiffRef.current;
+    const editorElement = editorViewRef.current?.scrollDOM;
+    if (!diffElement || !editorElement) {
+      return viewportTop;
     }
 
-    let low = 0;
-    let high = editorLineOffsets.length - 1;
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2);
-      if (editorLineOffsets[middle] <= scrollTop + 1) {
-        low = middle + 1;
-      } else {
-        high = middle - 1;
-      }
-    }
-
-    return Math.max(1, high + 1);
+    const diffTop = diffElement.getBoundingClientRect().top;
+    const editorTop = editorElement.getBoundingClientRect().top;
+    return Math.max(0, viewportTop + editorTop - diffTop + diffLineAlignmentOffset);
   }
 
   function scrollPendingDiffToEditorLine(
@@ -684,7 +911,7 @@ export default function App(): JSX.Element {
     }
 
     const maxScrollTop = diffElement.scrollHeight - diffElement.clientHeight;
-    const viewportTop = options.viewportTop ?? 8;
+    const viewportTop = getDiffViewportTop(options.viewportTop ?? 8);
     const lineProgress = clampRatio(options.lineProgress ?? 0);
     const diffRect = diffElement.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
@@ -696,50 +923,36 @@ export default function App(): JSX.Element {
     return true;
   }
 
-  function syncPendingDiffToEditorCursor(textarea: HTMLTextAreaElement): void {
+  function scrollPendingDiffForEditorLine(
+    lineNumber: number,
+    options: { viewportTop?: number; lineProgress?: number } = {}
+  ): void {
+    const lineIndex = Math.max(0, lineNumber - 1);
+    setCurrentEditorLine(lineNumber);
+
+    if (isLargeDiffPreview || !scrollPendingDiffToEditorLine(lineNumber, options)) {
+      const totalLines = editorViewRef.current?.state.doc.lines ?? countLines(editorContent);
+      const ratio = totalLines <= 1 ? 0 : lineIndex / (totalLines - 1);
+      scrollPendingDiffToRatio(ratio);
+    }
+  }
+
+  function syncPendingDiffToEditorCursor(
+    lineNumber: number,
+    viewportTop: number,
+    lineProgress: number
+  ): void {
     window.requestAnimationFrame(() => {
-      const textBeforeCursor = textarea.value.slice(0, textarea.selectionStart);
-      const cursorLineIndex = countLines(textBeforeCursor) - 1;
-      setCurrentEditorLine(cursorLineIndex + 1);
-      const cursorLineTop = editorLineOffsets[cursorLineIndex] ?? 16;
-      const cursorViewportTop = clampNumber(
-        cursorLineTop - textarea.scrollTop,
-        0,
-        Math.max(0, textarea.clientHeight - 28)
-      );
-      if (
-        !scrollPendingDiffToEditorLine(cursorLineIndex + 1, {
-          viewportTop: cursorViewportTop
-        })
-      ) {
-        const totalLines = countLines(textarea.value);
-        const ratio = totalLines <= 1 ? 0 : cursorLineIndex / (totalLines - 1);
-        scrollPendingDiffToRatio(ratio);
-      }
+      scrollPendingDiffForEditorLine(lineNumber, { viewportTop, lineProgress });
     });
   }
 
-  function syncPendingDiffToEditorScroll(textarea: HTMLTextAreaElement): void {
-    setEditorScrollTop(textarea.scrollTop);
-    if (editorLineNumbersRef.current) {
-      editorLineNumbersRef.current.scrollTop = textarea.scrollTop;
-    }
-
-    const lineNumber = findEditorLineAtScrollTop(textarea.scrollTop);
-    const lineIndex = lineNumber - 1;
-    const lineTop = editorLineOffsets[lineIndex] ?? 0;
-    const nextLineTop = editorLineOffsets[lineIndex + 1] ?? editorLineNumbersHeight;
-    const lineHeight = Math.max(1, nextLineTop - lineTop);
-    const lineProgress = clampRatio((textarea.scrollTop - lineTop) / lineHeight);
-    if (!scrollPendingDiffToEditorLine(lineNumber, { viewportTop: 0, lineProgress })) {
-      const maxScrollTop = textarea.scrollHeight - textarea.clientHeight;
-      if (maxScrollTop <= 0) {
-        scrollPendingDiffToRatio(0);
-        return;
-      }
-
-      scrollPendingDiffToRatio(textarea.scrollTop / maxScrollTop);
-    }
+  function syncPendingDiffToEditorScroll(
+    lineNumber: number,
+    viewportTop: number,
+    lineProgress: number
+  ): void {
+    scrollPendingDiffForEditorLine(lineNumber, { viewportTop, lineProgress });
   }
 
   function startFileListResize(event: ReactPointerEvent<HTMLButtonElement>): void {
@@ -786,9 +999,12 @@ export default function App(): JSX.Element {
       startTransition(() => {
         setFileDetail(null);
         setEditorContent("");
+        setDiffPreviewContent("");
         setEditorDirty(false);
+        setIsDiffPreviewStale(false);
+        clearDiffPreviewTimer();
+        setLargeDiffPreviewMode(false);
         setCurrentEditorLine(1);
-        setEditorScrollTop(0);
         setFileConflict(null);
         setFileValidationError(null);
       });
@@ -803,9 +1019,14 @@ export default function App(): JSX.Element {
       setFileDetail(detail);
       if (!preserveDraft || !editorDirty) {
         setEditorContent(detail.content);
+        setDiffPreviewContent(detail.content);
         setEditorDirty(false);
+        setIsDiffPreviewStale(false);
+        clearDiffPreviewTimer();
+        setLargeDiffPreviewMode(
+          detail.headContent.length + detail.content.length > largeDiffPreviewThreshold
+        );
         setCurrentEditorLine(1);
-        setEditorScrollTop(0);
         setFileConflict(null);
         setFileValidationError(null);
       }
@@ -932,34 +1153,6 @@ export default function App(): JSX.Element {
     };
   }, [authUser, error]);
 
-  useLayoutEffect(() => {
-    const measureElement = editorLineMeasureRef.current;
-    const textareaElement = editorTextareaRef.current;
-    if (!measureElement || !textareaElement) {
-      return;
-    }
-
-    const updateLineMetrics = (): void => {
-      setEditorMeasureWidth(textareaElement.clientWidth);
-      const lineElements = Array.from(
-        measureElement.querySelectorAll<HTMLElement>("[data-editor-line]")
-      );
-      setEditorLineOffsets(
-        lineElements.length ? lineElements.map((item) => item.offsetTop) : [16]
-      );
-      setEditorLineNumbersHeight(measureElement.scrollHeight);
-    };
-
-    updateLineMetrics();
-    const resizeObserver = new ResizeObserver(updateLineMetrics);
-    resizeObserver.observe(measureElement);
-    resizeObserver.observe(textareaElement);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [editorContent, fileListWidth]);
-
   useEffect(() => {
     if (!resizingFileList) {
       return;
@@ -1015,18 +1208,21 @@ export default function App(): JSX.Element {
 
     try {
       setFileConflict(null);
+      const latestContent = getLatestEditorContent();
       const detail = await requestJson<FileDetail>("/api/file", {
         method: "PUT",
         body: JSON.stringify({
           path: selectedPath,
-          content: editorContent
+          content: latestContent
         })
       });
 
       startTransition(() => {
         setFileDetail(detail);
         setEditorContent(detail.content);
+        setDiffPreviewContent(detail.content);
         setEditorDirty(false);
+        setIsDiffPreviewStale(false);
       });
       setMessage("文件已暂存到工作区");
       await refreshBootstrap(selectedPath);
@@ -1079,9 +1275,13 @@ export default function App(): JSX.Element {
       startTransition(() => {
         setFileDetail(detail);
         setEditorContent(detail.content);
+        setDiffPreviewContent(detail.content);
         setEditorDirty(false);
+        clearDiffPreviewTimer();
+        setLargeDiffPreviewMode(
+          detail.headContent.length + detail.content.length > largeDiffPreviewThreshold
+        );
         setCurrentEditorLine(1);
-        setEditorScrollTop(0);
       });
       setSelectedHistoryHash(detail.history[0]?.hash ?? "");
       setMessage("已丢弃当前文件的未提交修改");
@@ -1112,11 +1312,12 @@ export default function App(): JSX.Element {
         throw new Error("请先选择要提交的文件");
       }
 
+      const latestContent = getLatestEditorContent();
       await requestJson<{ head: string; path: string }>("/api/commit", {
         method: "POST",
         body: JSON.stringify({
           path: selectedPath,
-          content: editorContent,
+          content: latestContent,
           baseHead: fileDetail.baseHead,
           baseBlob: fileDetail.baseBlob,
           message: gitForm.extraMessage
@@ -1353,8 +1554,14 @@ export default function App(): JSX.Element {
   );
   const repoReady = bootstrap?.repoStatus.ready ?? false;
   const pendingBaseContent = fileDetail?.headContent ?? "";
-  const pendingContent = editorDirty ? editorContent : fileDetail?.content ?? "";
-  const hasPendingChanges = Boolean(selectedPath) && pendingBaseContent !== pendingContent;
+  const diffPreviewStatusText = isDiffPreviewStale
+    ? isLargeDiffPreview
+      ? "大文件模式已关闭实时差异预览"
+      : "差异预览稍后刷新"
+    : null;
+  const hasPendingChanges =
+    Boolean(selectedPath) &&
+    (editorDirty || pendingBaseContent !== (fileDetail?.content ?? ""));
   const canDiscardCurrentFile =
     Boolean(selectedPath) &&
     !saving &&
@@ -1363,19 +1570,11 @@ export default function App(): JSX.Element {
   const fileHistory = fileDetail?.history ?? [];
   const selectedHistory =
     fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
-  const editorLines = useMemo(() => editorContent.split("\n"), [editorContent]);
-  const editorLineNumbers = useMemo(
-    () => Array.from({ length: Math.max(editorLines.length, 1) }, (_, index) => index + 1),
-    [editorLines.length]
-  );
-  const currentEditorLineIndex = Math.max(0, Math.min(currentEditorLine - 1, editorLineOffsets.length - 1));
-  const currentEditorLineTop = editorLineOffsets[currentEditorLineIndex] ?? 16;
-  const currentEditorLineNextTop =
-    editorLineOffsets[currentEditorLineIndex + 1] ?? editorLineNumbersHeight;
-  const currentEditorLineHeight = Math.max(20, currentEditorLineNextTop - currentEditorLineTop);
   const workspaceLayoutStyle = {
     "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`
   } as CSSProperties;
+
+  useEffect(() => clearDiffPreviewTimer, []);
 
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
@@ -1804,9 +2003,14 @@ export default function App(): JSX.Element {
                     type="button"
                     onClick={() => {
                       setEditorContent(fileConflict.remoteContent);
+                      setDiffPreviewContent(fileConflict.remoteContent);
                       setEditorDirty(false);
+                      setIsDiffPreviewStale(false);
+                      clearDiffPreviewTimer();
+                      setLargeDiffPreviewMode(
+                        fileConflict.remoteContent.length * 2 > largeDiffPreviewThreshold
+                      );
                       setCurrentEditorLine(1);
-                      setEditorScrollTop(0);
                       setFileDetail((current) =>
                         current
                           ? {
@@ -1845,79 +2049,51 @@ export default function App(): JSX.Element {
                       当前文件没有未提交差异
                     </span>
                   ) : null}
+                  {diffPreviewStatusText ? (
+                    <span className="inline-flex items-center rounded-full bg-[#d8a21b]/15 px-3 py-1.5 text-xs text-[#785918]">
+                      {diffPreviewStatusText}
+                    </span>
+                  ) : null}
                 </div>
-                <DiffView
-                  before={pendingBaseContent}
-                  after={pendingContent}
-                  emptyText={loading ? "正在加载..." : "当前文件没有未提交差异"}
-                  className={editorSurfaceHeightClass}
-                  scrollRef={pendingDiffRef}
-                  showContentWhenUnchanged
-                  highlightAfterLine={currentEditorLine}
-                />
+                {isLargeDiffPreview ? (
+                  <div
+                    ref={pendingDiffRef}
+                    className={cn(emptyBlockClass, editorSurfaceHeightClass, "grid content-center")}
+                  >
+                    大文件模式下已暂停左侧实时差异渲染，避免加载和滚动卡死。暂存、提交、冲突检测仍使用右侧最新编辑内容。
+                  </div>
+                ) : (
+                  <DiffView
+                    before={pendingBaseContent}
+                    after={diffPreviewContent}
+                    emptyText={loading ? "正在加载..." : "当前文件没有未提交差异"}
+                    className={editorSurfaceHeightClass}
+                    scrollRef={pendingDiffRef}
+                    showContentWhenUnchanged
+                    highlightAfterLine={isDiffPreviewStale ? null : currentEditorLine}
+                  />
+                )}
               </div>
 
               <div className="grid content-start gap-3">
                 <div className="flex min-h-[32px] items-center font-bold text-[#20404a]">在线编辑</div>
-                <div className={cn("grid grid-cols-[28px_minmax(0,1fr)] overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
-                  <div
-                    ref={editorLineNumbersRef}
-                    className="relative select-none overflow-hidden border-r border-[#183039]/10 bg-[#eef4f3]/70 px-1 text-right font-mono text-[12px] leading-[1.65] text-[#8b9aa1]"
-                    aria-hidden="true"
-                  >
-                    <div className="relative" style={{ height: `${editorLineNumbersHeight}px` }}>
-                      {editorLineNumbers.map((lineNumber, index) => (
-                        <div
-                          key={lineNumber}
-                          className="absolute right-1"
-                          style={{ top: `${editorLineOffsets[index] ?? 16}px` }}
-                        >
-                          {lineNumber}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="relative h-full min-w-0">
-                    {selectedPath ? (
-                      <div
-                        className="pointer-events-none absolute left-0 right-0 rounded-lg bg-[#1d8c68]/10"
-                        style={{
-                          top: `${currentEditorLineTop - editorScrollTop}px`,
-                          height: `${currentEditorLineHeight}px`
-                        }}
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    <div
-                      ref={editorLineMeasureRef}
-                      className="pointer-events-none invisible absolute left-0 top-0 overflow-hidden whitespace-pre-wrap break-words py-4 pl-3 pr-4 font-mono text-[13px] leading-[1.65]"
-                      style={editorMeasureWidth ? { width: `${editorMeasureWidth}px` } : undefined}
-                      aria-hidden="true"
-                    >
-                      {editorLines.map((line, index) => (
-                        <div key={index} data-editor-line className="min-h-[1.65em]">
-                          {line || " "}
-                        </div>
-                      ))}
-                    </div>
-                    <textarea
-                      ref={editorTextareaRef}
-                      className="relative h-full w-full resize-none overflow-auto border-0 bg-transparent py-4 pl-3 pr-4 font-mono text-[13px] leading-[1.65] text-[#183039] outline-none placeholder:text-[#8b9aa1] disabled:cursor-not-allowed disabled:opacity-60"
-                      value={editorContent}
-                      onChange={(event) => {
-                        setEditorContent(event.target.value);
-                        setEditorDirty(true);
-                        setFileValidationError(null);
-                        syncPendingDiffToEditorCursor(event.currentTarget);
-                      }}
-                      onClick={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                      onKeyUp={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                      onSelect={(event) => syncPendingDiffToEditorCursor(event.currentTarget)}
-                      onScroll={(event) => syncPendingDiffToEditorScroll(event.currentTarget)}
-                      placeholder="请选择要编辑的文件"
-                      disabled={!selectedPath}
-                    />
-                  </div>
+                <div className={cn("overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
+                  <ConfigEditor
+                    value={editorContent}
+                    disabled={!selectedPath}
+                    placeholderText="请选择要编辑的文件"
+                    onViewReady={(view) => {
+                      editorViewRef.current = view;
+                    }}
+                    onChange={(view) => {
+                      setEditorDirty(true);
+                      setIsDiffPreviewStale(true);
+                      setFileValidationError(null);
+                      scheduleDiffPreviewUpdate(view);
+                    }}
+                    onCursorLineChange={syncPendingDiffToEditorCursor}
+                    onViewportLineChange={syncPendingDiffToEditorScroll}
+                  />
                 </div>
                 {fileValidationError ? (
                   <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
