@@ -615,6 +615,18 @@ export async function writeRepoFile(
   return readFileDetail(config, repoRelativePath);
 }
 
+export async function discardRepoFileChanges(
+  config: AppConfig,
+  filePath: string
+): Promise<FileDetail> {
+  const repoPath = resolveRepoPath(config);
+  const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
+  await runGit(["restore", "--staged", "--worktree", "--", repoRelativePath], {
+    cwd: repoPath
+  });
+  return readFileDetail(config, repoRelativePath);
+}
+
 export async function commitAndPushFile(
   config: AppConfig,
   _runtime: RuntimeState,

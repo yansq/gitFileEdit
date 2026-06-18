@@ -14,6 +14,7 @@ import {
 import { ConfigFileValidationError } from "./fileValidation";
 import {
   commitAndPushFile,
+  discardRepoFileChanges,
   FileConflictError,
   inspectRepo,
   listRepoFiles,
@@ -180,6 +181,27 @@ app.put("/api/file", async (request, response, next) => {
     notifier.broadcast("repo-changed", {
       relativePath: filePath,
       eventType: "save"
+    });
+    response.json(detail);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/file/discard", async (request, response, next) => {
+  try {
+    const filePath = String(request.body.path ?? "").trim();
+    if (!filePath) {
+      response.status(400).json({ error: "缺少文件路径" });
+      return;
+    }
+
+    const config = await loadAppConfig();
+    const detail = await discardRepoFileChanges(config, filePath);
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", {
+      relativePath: detail.path,
+      eventType: "discard"
     });
     response.json(detail);
   } catch (error) {

@@ -15,6 +15,9 @@
     "start": "node dist/server/index.js"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.1",
     "diff": "^7.0.0",
     "express": "^4.21.2",
     "jsonc-parser": "^3.3.1",

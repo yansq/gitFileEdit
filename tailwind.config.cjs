@@ -4,8 +4,25 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["IBM Plex Sans", "PingFang SC", "Segoe UI", "sans-serif"],
-        mono: ["JetBrains Mono", "SFMono-Regular", "monospace"]
+        sans: [
+          "Inter",
+          "Segoe UI",
+          "Microsoft YaHei UI",
+          "Microsoft YaHei",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Noto Sans CJK SC",
+          "Noto Sans SC",
+          "sans-serif"
+        ],
+        mono: [
+          "JetBrains Mono",
+          "Cascadia Code",
+          "SFMono-Regular",
+          "Consolas",
+          "Liberation Mono",
+          "monospace"
+        ]
       }
     }
   },
