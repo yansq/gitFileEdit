@@ -30,6 +30,11 @@ function main() {
     "test.setting=initial\n",
     "utf8"
   );
+  writeFileSync(
+    path.join(configDir, "invalid-yaml-for-validation.yaml"),
+    "app:\n  name: validation-demo\n  broken: [one, two\n",
+    "utf8"
+  );
 
   run("git", ["init", "-b", "main"], { cwd: seedPath });
   run("git", ["config", "user.name", "Seed"], { cwd: seedPath });

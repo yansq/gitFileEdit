@@ -1,4 +1,10 @@
-import type { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import {
+  parse as parseJson,
+  printParseErrorCode,
+  type ParseError
+} from "jsonc-parser";
 import {
   startTransition,
   useEffect,
@@ -9,9 +15,13 @@ import {
   type FormEvent,
   type PointerEvent as ReactPointerEvent
 } from "react";
+import { parseDocument } from "yaml";
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
-import { ConfigEditor } from "./components/ConfigEditor";
+import {
+  ConfigEditor,
+  type ConfigEditorValidationIssue
+} from "./components/ConfigEditor";
 import { DiffView } from "./components/DiffView";
 import { FileTree } from "./components/FileTree";
 import { ToastStack } from "./components/ToastStack";
@@ -179,6 +189,123 @@ function clampRatio(value: number): number {
   return Math.min(Math.max(value, 0), 1);
 }
 
+function findTextMatches(content: string, query: string): Array<{ from: number; to: number }> {
+  if (!query) {
+    return [];
+  }
+
+  const matches: Array<{ from: number; to: number }> = [];
+  const lowerContent = content.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let from = 0;
+
+  while (from < content.length) {
+    const index = lowerContent.indexOf(lowerQuery, from);
+    if (index === -1) {
+      break;
+    }
+
+    matches.push({ from: index, to: index + query.length });
+    from = index + query.length;
+  }
+
+  return matches;
+}
+
+function getPositionText(content: string, offset: number): string {
+  const beforeError = content.slice(0, Math.max(0, offset));
+  const lines = beforeError.split("\n");
+  return `第 ${lines.length} 行第 ${lines[lines.length - 1].length + 1} 列`;
+}
+
+function getOffsetFromLineColumn(content: string, lineNumber: number, columnNumber: number): number {
+  let line = 1;
+  let column = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (line === lineNumber && column === columnNumber) {
+      return index;
+    }
+    if (content.charCodeAt(index) === 10) {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+
+  return content.length;
+}
+
+function createValidationIssue(
+  content: string,
+  from: number,
+  length: number,
+  message: string
+): ConfigEditorValidationIssue | null {
+  if (!content) {
+    return null;
+  }
+
+  const safeFrom = clampNumber(from, 0, Math.max(0, content.length - 1));
+  const safeTo = clampNumber(safeFrom + Math.max(1, length), safeFrom + 1, content.length);
+  return {
+    from: safeFrom,
+    to: safeTo,
+    message
+  };
+}
+
+function getEditorValidationIssue(
+  filePath: string,
+  content: string,
+  forceYaml = false
+): ConfigEditorValidationIssue | null {
+  const extension = forceYaml ? "yaml" : filePath.split(".").pop()?.toLocaleLowerCase();
+  if (extension === "json") {
+    const errors: ParseError[] = [];
+    parseJson(content, errors, {
+      allowTrailingComma: false,
+      disallowComments: true
+    });
+    const firstError = errors[0];
+    if (!firstError) {
+      return null;
+    }
+
+    return createValidationIssue(
+      content,
+      firstError.offset,
+      firstError.length,
+      `${filePath} JSON 格式错误：${getPositionText(content, firstError.offset)}，${printParseErrorCode(firstError.error)}`
+    );
+  }
+
+  if (extension === "yaml" || extension === "yml") {
+    const document = parseDocument(content, {
+      prettyErrors: false,
+      strict: true
+    });
+    const firstError = document.errors[0];
+    if (!firstError) {
+      return null;
+    }
+
+    const from =
+      firstError.linePos?.[0]
+        ? getOffsetFromLineColumn(content, firstError.linePos[0].line, firstError.linePos[0].col)
+        : firstError.pos[0];
+    const length = Math.max(1, firstError.pos[1] - firstError.pos[0]);
+    return createValidationIssue(
+      content,
+      from,
+      length,
+      `${filePath} YAML 格式错误：${getPositionText(content, from)}，${firstError.message}`
+    );
+  }
+
+  return null;
+}
+
 export default function App(): JSX.Element {
   const pendingDiffRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
@@ -197,6 +324,9 @@ export default function App(): JSX.Element {
   const [editorDirty, setEditorDirty] = useState(false);
   const [isLargeDiffPreview, setIsLargeDiffPreview] = useState(false);
   const [isDiffPreviewStale, setIsDiffPreviewStale] = useState(false);
+  const [editorSearchInput, setEditorSearchInput] = useState("");
+  const [editorSearch, setEditorSearch] = useState("");
+  const [editorSearchIndex, setEditorSearchIndex] = useState(-1);
   const [fileConflict, setFileConflict] = useState<FileConflictPayload | null>(null);
   const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const [gitForm, setGitForm] = useState({
@@ -1209,6 +1339,14 @@ export default function App(): JSX.Element {
   const fileHistory = fileDetail?.history ?? [];
   const selectedHistory =
     fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
+  const editorSearchMatches = useMemo(
+    () => findTextMatches(editorContent, editorSearch),
+    [editorContent, editorSearch]
+  );
+  const editorValidationIssue = useMemo(
+    () => selectedPath ? getEditorValidationIssue(selectedPath, editorContent) : null,
+    [editorContent, selectedPath]
+  );
   const selectedReviewCommit =
     reviewCommits.find((commit) => commit.hash === selectedReviewHash) ?? reviewCommits[0] ?? null;
   const workspaceLayoutStyle = {
@@ -1216,6 +1354,85 @@ export default function App(): JSX.Element {
   } as CSSProperties;
 
   useEffect(() => clearDiffPreviewTimer, []);
+
+  useEffect(() => {
+    setEditorSearchIndex(editorSearchMatches.length ? 0 : -1);
+  }, [editorSearch, editorSearchMatches.length]);
+
+  function scrollToEditorSearchMatch(match: { from: number; to: number }): void {
+    const view = editorViewRef.current;
+    if (!view) {
+      return;
+    }
+
+    const line = view.state.doc.lineAt(match.from);
+    const block = view.lineBlockAt(match.from);
+    const maxScrollTop = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
+    view.dispatch({
+      selection: EditorSelection.single(match.from, match.to)
+    });
+    const nextScrollTop = Math.max(
+      0,
+      Math.min(maxScrollTop, block.top - view.scrollDOM.clientHeight / 2 + block.height / 2)
+    );
+    view.scrollDOM.scrollTop = nextScrollTop;
+    window.requestAnimationFrame(() => {
+      scrollPendingDiffForEditorLine(line.number, {
+        viewportTop: Math.max(0, block.top - nextScrollTop)
+      });
+    });
+  }
+
+  useEffect(() => {
+    const match = editorSearchMatches[editorSearchIndex];
+    if (!match) {
+      return;
+    }
+
+    scrollToEditorSearchMatch(match);
+  }, [editorSearchIndex, editorSearchMatches]);
+
+  function findAdjacentEditorSearchMatch(direction: -1 | 1): void {
+    if (!editorSearchInput) {
+      return;
+    }
+
+    if (editorSearchInput !== editorSearch) {
+      const matches = findTextMatches(editorContent, editorSearchInput);
+      const nextIndex = direction < 0 ? matches.length - 1 : 0;
+      setEditorSearch(editorSearchInput);
+      setEditorSearchIndex(matches.length ? nextIndex : -1);
+      if (matches[nextIndex]) {
+        scrollToEditorSearchMatch(matches[nextIndex]);
+      }
+      return;
+    }
+
+    if (!editorSearchMatches.length) {
+      return;
+    }
+
+    setEditorSearchIndex((current) => {
+      const safeCurrent = current < 0 ? 0 : current;
+      return (safeCurrent + direction + editorSearchMatches.length) % editorSearchMatches.length;
+    });
+  }
+
+  function validateEditorAsYaml(): void {
+    if (!selectedPath) {
+      return;
+    }
+
+    const validationError = getEditorValidationIssue(selectedPath, editorContent, true)?.message ?? null;
+    if (validationError) {
+      setMessage(null);
+      setError(validationError);
+      return;
+    }
+
+    setError(null);
+    setMessage("YAML 格式校验通过");
+  }
 
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
@@ -1899,7 +2116,7 @@ export default function App(): JSX.Element {
 
             <div className="grid gap-[18px] min-[961px]:grid-cols-2">
               <div className="grid content-start gap-3">
-                <div className="flex min-h-[32px] flex-wrap items-center gap-2">
+                <div className="flex min-h-11 flex-wrap items-center gap-2">
                   <div className="font-bold text-[#20404a]">原始文件</div>
                   {selectedPath && !hasPendingChanges ? (
                     <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
@@ -1933,23 +2150,67 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="grid content-start gap-3">
-                <div className="flex min-h-[32px] items-center gap-2 font-bold text-[#20404a]">
-                  在线编辑
+                <div className="flex min-h-11 min-w-0 items-center gap-3 text-[#20404a]">
+                  <div className="shrink-0 font-bold">在线编辑</div>
                   {isProtectedFileReadOnly ? (
-                    <span className="rounded-full bg-[#143138]/[0.08] px-2.5 py-1 text-xs font-semibold text-[#53676e]">
+                    <span className="shrink-0 rounded-full bg-[#143138]/[0.08] px-2.5 py-1 text-xs font-semibold text-[#53676e]">
                       只读
                     </span>
                   ) : null}
+                  <div className="ml-auto flex min-w-0 flex-1 items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+                    <input
+                      className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm font-normal text-[#183039] outline-none placeholder:text-[#8b9aa1]"
+                      value={editorSearchInput}
+                      onChange={(event) => setEditorSearchInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
+                        }
+                      }}
+                      placeholder="搜索在线编辑内容"
+                      disabled={!selectedPath}
+                    />
+                    <span className="shrink-0 rounded-lg bg-[#143138]/[0.06] px-2 py-1 text-center text-xs font-semibold text-[#6c7d84]">
+                      {editorSearch ? `${editorSearchIndex + 1 || 0}/${editorSearchMatches.length}` : "0/0"}
+                    </span>
+                    <button
+                      type="button"
+                      className="h-8 shrink-0 rounded-xl border-0 bg-[#143138]/[0.07] px-3 text-sm font-semibold text-[#24424a] transition duration-200 hover:bg-[#143138]/[0.12] disabled:cursor-not-allowed disabled:opacity-45"
+                      onClick={() => findAdjacentEditorSearchMatch(-1)}
+                      disabled={!selectedPath || !editorSearchInput}
+                    >
+                      查找上一处
+                    </button>
+                    <button
+                      type="button"
+                      className="h-8 shrink-0 rounded-xl border-0 bg-[#0e6b72] px-3 text-sm font-semibold text-white transition duration-200 hover:bg-[#0b5b61] disabled:cursor-not-allowed disabled:opacity-45"
+                      onClick={() => findAdjacentEditorSearchMatch(1)}
+                      disabled={!selectedPath || !editorSearchInput}
+                    >
+                      查找下一处
+                    </button>
+                  </div>
                 </div>
-                <div className={cn("overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
+                <div className={cn("relative overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
+                  <button
+                    type="button"
+                    className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={validateEditorAsYaml}
+                    disabled={!selectedPath}
+                  >
+                    校验 YAML
+                  </button>
                   <ConfigEditor
                     value={editorContent}
                     disabled={!selectedPath || isProtectedFileReadOnly}
                     placeholderText="请选择要编辑的文件"
+                    validationIssue={editorValidationIssue}
                     onViewReady={(view) => {
                       editorViewRef.current = view;
                     }}
                     onChange={(view) => {
+                      setEditorContent(view.state.doc.toString());
                       setEditorDirty(true);
                       setIsDiffPreviewStale(true);
                       setFileValidationError(null);
@@ -1963,6 +2224,12 @@ export default function App(): JSX.Element {
                   <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
                     <strong>格式校验未通过</strong>
                     <div className="mt-1 break-words text-[#8d3322]">{fileValidationError}</div>
+                  </div>
+                ) : null}
+                {!fileValidationError && editorValidationIssue ? (
+                  <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
+                    <strong>实时格式提示</strong>
+                    <div className="mt-1 break-words text-[#8d3322]">{editorValidationIssue.message}</div>
                   </div>
                 ) : null}
               </div>

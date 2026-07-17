@@ -1,6 +1,7 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import {
+  Decoration,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -35,12 +36,13 @@ const configEditorTheme = EditorView.theme(
         '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
       fontSize: "13px",
       lineHeight: "1.65",
-      overflow: "auto"
+      overflow: "auto",
+      scrollPaddingBottom: "64px"
     },
     ".cm-content": {
       caretColor: "transparent",
       minHeight: "100%",
-      padding: "16px 16px 16px 12px"
+      padding: "16px 16px 64px 12px"
     },
     ".cm-cursorLayer .cm-cursor": {
       borderLeft: "2px solid #c94a35"
@@ -69,15 +71,43 @@ const configEditorTheme = EditorView.theme(
     },
     ".cm-placeholder": {
       color: "#8b9aa1"
+    },
+    ".cm-validationIssue": {
+      backgroundColor: "rgba(201, 74, 53, 0.12)",
+      textDecoration: "underline wavy #c94a35",
+      textDecorationThickness: "1.5px",
+      textUnderlineOffset: "3px"
     }
   },
   { dark: false }
 );
 
+export interface ConfigEditorValidationIssue {
+  from: number;
+  to: number;
+  message: string;
+}
+
+function validationDecorations(issue: ConfigEditorValidationIssue | null) {
+  if (!issue || issue.to <= issue.from) {
+    return Decoration.none;
+  }
+
+  return Decoration.set([
+    Decoration.mark({
+      class: "cm-validationIssue",
+      attributes: {
+        title: issue.message
+      }
+    }).range(issue.from, issue.to)
+  ]);
+}
+
 export function ConfigEditor(props: {
   value: string;
   disabled: boolean;
   placeholderText: string;
+  validationIssue: ConfigEditorValidationIssue | null;
   onChange: (view: EditorView) => void;
   onViewReady: (view: EditorView | null) => void;
   onCursorLineChange: (lineNumber: number, viewportTop: number, lineProgress: number) => void;
@@ -88,6 +118,7 @@ export function ConfigEditor(props: {
   const valueRef = useRef(props.value);
   const applyingExternalValueRef = useRef(false);
   const disabledCompartmentRef = useRef(new Compartment());
+  const validationCompartmentRef = useRef(new Compartment());
   const onChangeRef = useRef(props.onChange);
   const onCursorLineChangeRef = useRef(props.onCursorLineChange);
   const onViewportLineChangeRef = useRef(props.onViewportLineChange);
@@ -143,6 +174,9 @@ export function ConfigEditor(props: {
           drawSelection(),
           placeholder(props.placeholderText),
           configEditorTheme,
+          validationCompartmentRef.current.of(
+            EditorView.decorations.of(validationDecorations(props.validationIssue))
+          ),
           disabledCompartmentRef.current.of([
             EditorState.readOnly.of(props.disabled),
             EditorView.editable.of(!props.disabled)
@@ -219,6 +253,19 @@ export function ConfigEditor(props: {
       ])
     });
   }, [props.disabled]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: validationCompartmentRef.current.reconfigure(
+        EditorView.decorations.of(validationDecorations(props.validationIssue))
+      )
+    });
+  }, [props.validationIssue]);
 
   return <div ref={hostRef} className="h-full min-w-0" />;
 }
