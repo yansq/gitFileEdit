@@ -63,7 +63,8 @@ const configEditorTheme = EditorView.theme(
       padding: "0 4px 0 2px"
     },
     ".cm-activeLine": {
-      backgroundColor: "rgba(29, 140, 104, 0.1)"
+      backgroundColor: "rgba(29, 140, 104, 0.1)",
+      borderRadius: "10px"
     },
     ".cm-activeLineGutter": {
       backgroundColor: "rgba(29, 140, 104, 0.08)",
