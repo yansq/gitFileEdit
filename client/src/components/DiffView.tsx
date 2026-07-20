@@ -78,13 +78,13 @@ export function DiffView(props: {
   }
 
   return (
-    <div ref={props.scrollRef} className={cn("grid auto-rows-min content-start gap-0.5 overflow-x-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-2", props.className)}>
+    <div ref={props.scrollRef} className={cn("grid auto-rows-min content-start gap-0 overflow-x-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4", props.className)}>
       {blocks.map((block) => (
         <div
           key={block.id}
           data-after-line={block.afterLineNumber ?? undefined}
           className={cn(
-            "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-[10px] px-1 py-1",
+            "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-[10px] px-1 py-0",
             props.highlightAfterLine !== null &&
             props.highlightAfterLine !== undefined &&
             block.afterLineNumber === props.highlightAfterLine &&

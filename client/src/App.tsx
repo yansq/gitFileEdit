@@ -76,6 +76,15 @@ const mainContentMinWidth = 520;
 const diffPreviewDebounceMs = 280;
 const largeDiffPreviewThreshold = 200 * 1024;
 const diffLineAlignmentOffset = -3;
+const wheelGestureIdleMs = 600;
+const wheelLineDeltaPx = 16;
+
+type WheelGestureTarget = "page" | "editorSurface";
+
+interface WheelGestureLock {
+  target: WheelGestureTarget;
+  resetTimer: number | null;
+}
 
 class ApiRequestError extends Error {
   constructor(
@@ -308,7 +317,9 @@ function getEditorValidationIssue(
 
 export default function App(): JSX.Element {
   const pendingDiffRef = useRef<HTMLDivElement>(null);
+  const editorSurfaceRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+  const wheelGestureRef = useRef<WheelGestureLock | null>(null);
   const diffPreviewTimerRef = useRef<number | null>(null);
   const isLargeDiffPreviewRef = useRef(false);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -650,6 +661,84 @@ export default function App(): JSX.Element {
       setError((fetchError as Error).message);
     });
   }, [selectedPath]);
+
+  useEffect(() => {
+    function isEditorSurfaceTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof Node)) {
+        return false;
+      }
+
+      return Boolean(
+        pendingDiffRef.current?.contains(target) ||
+          editorSurfaceRef.current?.contains(target) ||
+          editorViewRef.current?.scrollDOM.contains(target)
+      );
+    }
+
+    function getScrollDelta(delta: number, deltaMode: number, pageSize: number): number {
+      if (deltaMode === 1) {
+        return delta * wheelLineDeltaPx;
+      }
+
+      if (deltaMode === 2) {
+        return delta * pageSize;
+      }
+
+      return delta;
+    }
+
+    function resetWheelGestureLater(lock: WheelGestureLock): void {
+      if (lock.resetTimer !== null) {
+        window.clearTimeout(lock.resetTimer);
+      }
+
+      lock.resetTimer = window.setTimeout(() => {
+        if (wheelGestureRef.current === lock) {
+          wheelGestureRef.current = null;
+        }
+      }, wheelGestureIdleMs);
+    }
+
+    function handleWheel(event: WheelEvent): void {
+      if (event.ctrlKey) {
+        return;
+      }
+
+      let lock = wheelGestureRef.current;
+      if (!lock) {
+        lock = {
+          target: isEditorSurfaceTarget(event.target) ? "editorSurface" : "page",
+          resetTimer: null
+        };
+        wheelGestureRef.current = lock;
+      }
+
+      resetWheelGestureLater(lock);
+
+      if (lock.target !== "page" || !isEditorSurfaceTarget(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      window.scrollBy({
+        left: getScrollDelta(event.deltaX, event.deltaMode, window.innerWidth),
+        top: getScrollDelta(event.deltaY, event.deltaMode, window.innerHeight),
+        behavior: "auto"
+      });
+    }
+
+    window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+
+    return () => {
+      const lock = wheelGestureRef.current;
+      if (lock && lock.resetTimer !== null) {
+        window.clearTimeout(lock.resetTimer);
+      }
+      wheelGestureRef.current = null;
+      window.removeEventListener("wheel", handleWheel, { capture: true });
+    };
+  }, []);
 
   useEffect(() => {
     const history = fileDetail?.history ?? [];
@@ -1356,7 +1445,17 @@ export default function App(): JSX.Element {
   useEffect(() => clearDiffPreviewTimer, []);
 
   useEffect(() => {
-    setEditorSearchIndex(editorSearchMatches.length ? 0 : -1);
+    setEditorSearchIndex((current) => {
+      if (!editorSearch || !editorSearchMatches.length) {
+        return -1;
+      }
+
+      if (current < 0) {
+        return 0;
+      }
+
+      return Math.min(current, editorSearchMatches.length - 1);
+    });
   }, [editorSearch, editorSearchMatches.length]);
 
   function scrollToEditorSearchMatch(match: { from: number; to: number }): void {
@@ -1383,39 +1482,33 @@ export default function App(): JSX.Element {
     });
   }
 
-  useEffect(() => {
-    const match = editorSearchMatches[editorSearchIndex];
-    if (!match) {
-      return;
-    }
-
-    scrollToEditorSearchMatch(match);
-  }, [editorSearchIndex, editorSearchMatches]);
-
   function findAdjacentEditorSearchMatch(direction: -1 | 1): void {
     if (!editorSearchInput) {
       return;
     }
 
-    if (editorSearchInput !== editorSearch) {
-      const matches = findTextMatches(editorContent, editorSearchInput);
-      const nextIndex = direction < 0 ? matches.length - 1 : 0;
+    const isNewSearch = editorSearchInput !== editorSearch;
+    const matches = isNewSearch
+      ? findTextMatches(editorContent, editorSearchInput)
+      : editorSearchMatches;
+
+    if (isNewSearch) {
       setEditorSearch(editorSearchInput);
-      setEditorSearchIndex(matches.length ? nextIndex : -1);
-      if (matches[nextIndex]) {
-        scrollToEditorSearchMatch(matches[nextIndex]);
-      }
+    }
+
+    if (!matches.length) {
+      setEditorSearchIndex(-1);
       return;
     }
 
-    if (!editorSearchMatches.length) {
-      return;
-    }
+    const nextIndex = isNewSearch
+      ? direction < 0
+        ? matches.length - 1
+        : 0
+      : (Math.max(editorSearchIndex, 0) + direction + matches.length) % matches.length;
 
-    setEditorSearchIndex((current) => {
-      const safeCurrent = current < 0 ? 0 : current;
-      return (safeCurrent + direction + editorSearchMatches.length) % editorSearchMatches.length;
-    });
+    setEditorSearchIndex(nextIndex);
+    scrollToEditorSearchMatch(matches[nextIndex]);
   }
 
   function validateEditorAsYaml(): void {
@@ -2192,7 +2285,10 @@ export default function App(): JSX.Element {
                     </button>
                   </div>
                 </div>
-                <div className={cn("relative overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}>
+                <div
+                  ref={editorSurfaceRef}
+                  className={cn("relative overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}
+                >
                   <button
                     type="button"
                     className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
