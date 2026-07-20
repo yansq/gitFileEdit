@@ -185,11 +185,7 @@ export function ConfigEditor(props: {
           EditorView.lineWrapping,
           EditorView.updateListener.of((update: ViewUpdate) => {
             if (update.docChanged) {
-              let nextValue = valueRef.current;
-              update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-                nextValue = `${nextValue.slice(0, fromA)}${inserted.toString()}${nextValue.slice(toA)}`;
-              });
-              valueRef.current = nextValue;
+              valueRef.current = update.state.doc.toString();
               if (!applyingExternalValueRef.current) {
                 onChangeRef.current(update.view);
               }
