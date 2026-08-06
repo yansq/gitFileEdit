@@ -1,4 +1,4 @@
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import {
   Decoration,
@@ -171,7 +171,7 @@ export function ConfigEditor(props: {
           highlightActiveLineGutter(),
           highlightActiveLine(),
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
           drawSelection(),
           placeholder(props.placeholderText),
           configEditorTheme,
