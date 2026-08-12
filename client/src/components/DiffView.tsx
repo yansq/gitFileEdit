@@ -97,7 +97,7 @@ export function DiffView(props: {
           <span className="select-none text-right font-mono text-[12px] leading-[1.65] text-[#8b9aa1]">
             {block.lineNumber}
           </span>
-          <span className="font-mono text-[13px] leading-[1.65] text-[#4a5b61]">{block.marker}</span>
+          <span className="select-none font-mono text-[13px] leading-[1.65] text-[#4a5b61]">{block.marker}</span>
           <span className="grid min-w-0 gap-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.65]">
             <span className="min-w-0">
               <VisibleWhitespace text={block.line.text} hasNewline={block.line.hasNewline} />

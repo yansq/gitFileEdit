@@ -31,6 +31,7 @@ import {
   replaceEnvironmentRoot
 } from "./lib/filePaths";
 import { formatTime, getCommitBody, getCommitSubject } from "./lib/format";
+import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
 import {
   cn,
   editorSurfaceHeightClass,
@@ -67,6 +68,12 @@ interface FileValidationPayload {
   type: "file_validation";
   fileType: string;
   message: string;
+}
+
+interface PendingReplay {
+  hash: string;
+  sourcePath: string;
+  patch: string;
 }
 
 const fileListMinWidth = 260;
@@ -350,6 +357,7 @@ export default function App(): JSX.Element {
   const [confirmingCommit, setConfirmingCommit] = useState(false);
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string>("");
   const [restoringHash, setRestoringHash] = useState<string | null>(null);
+  const [pendingReplay, setPendingReplay] = useState<PendingReplay | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [showRepoDetails, setShowRepoDetails] = useState(false);
   const [fileListWidth, setFileListWidth] = useState(fileListDefaultWidth);
@@ -400,6 +408,7 @@ export default function App(): JSX.Element {
     setCurrentEditorLine(1);
     setFileConflict(null);
     setFileValidationError(null);
+    setPendingReplay(null);
     setReviewOpen(false);
     setReviewCommits([]);
     setSelectedReviewHash("");
@@ -1005,6 +1014,58 @@ export default function App(): JSX.Element {
     } finally {
       setCommitting(false);
     }
+  }
+
+  function extractHistoryReplay(commit: CommitSnapshot): void {
+    if (!selectedPath) {
+      return;
+    }
+    if (authUser?.role !== "admin") {
+      setError("仅管理员可提取历史修改");
+      return;
+    }
+    if (commit.beforeContent === commit.afterContent) {
+      setError("该提交没有可重放的文件修改");
+      return;
+    }
+
+    setPendingReplay({
+      hash: commit.hash,
+      sourcePath: selectedPath,
+      patch: createReplayPatch(selectedPath, commit.beforeContent, commit.afterContent)
+    });
+    setError(null);
+    setMessage(`已提取 ${commit.hash.slice(0, 8)} 的修改，可在任意文件中尝试重放`);
+  }
+
+  function replayExtractedChange(): void {
+    if (!selectedPath || !pendingReplay) {
+      return;
+    }
+    if (authUser?.role !== "admin") {
+      setError("仅管理员可重放历史修改");
+      return;
+    }
+
+    const replayedContent = applyReplayPatch(getLatestEditorContent(), pendingReplay.patch);
+    if (replayedContent === null) {
+      setError("当前文件内容与提取修改的上下文不匹配，无法执行重放");
+      return;
+    }
+
+    clearDiffPreviewTimer();
+    const nextIsLarge = updateLargeDiffPreviewMode(replayedContent.length);
+    setEditorContent(replayedContent);
+    setEditorDirty(true);
+    setFileValidationError(null);
+    if (nextIsLarge) {
+      setIsDiffPreviewStale(true);
+    } else {
+      setDiffPreviewContent(replayedContent);
+      setIsDiffPreviewStale(false);
+    }
+    setError(null);
+    setMessage(`已重放 ${pendingReplay.hash.slice(0, 8)} 的修改，尚未提交`);
   }
 
   async function restoreHistoryCommit(commit: CommitSnapshot): Promise<void> {
@@ -2289,6 +2350,17 @@ export default function App(): JSX.Element {
                   ref={editorSurfaceRef}
                   className={cn("relative overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}
                 >
+                  {pendingReplay ? (
+                    <button
+                      type="button"
+                      className="absolute bottom-3 left-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
+                      title={`来源：${pendingReplay.sourcePath} @ ${pendingReplay.hash}`}
+                      onClick={replayExtractedChange}
+                      disabled={!selectedPath || authUser?.role !== "admin"}
+                    >
+                      重放修改 {pendingReplay.hash.slice(0, 8)}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
@@ -2401,14 +2473,38 @@ export default function App(): JSX.Element {
                         </div>
                       ) : null}
                     </div>
-                    <button
-                      className={primaryButtonClass}
-                      type="button"
-                      onClick={() => void restoreHistoryCommit(selectedHistory)}
-                      disabled={!selectedPath || isProtectedFileReadOnly || restoringHash !== null}
-                    >
-                      {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
-                    </button>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <div className="flex items-center gap-1">
+                        <button
+                          className={secondaryButtonClass}
+                          type="button"
+                          onClick={() => extractHistoryReplay(selectedHistory)}
+                          disabled={
+                            !selectedPath ||
+                            authUser?.role !== "admin" ||
+                            selectedHistory.beforeContent === selectedHistory.afterContent
+                          }
+                        >
+                          {pendingReplay?.hash === selectedHistory.hash && pendingReplay.sourcePath === selectedPath
+                            ? "已提取修改"
+                            : "提取修改"}
+                        </button>
+                        <span
+                          className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-[#183039]/15 text-xs font-bold text-[#61747b]"
+                          title="可将本次修改提取后，尝试重放到任意环境或文件。只有待修改内容及其前后各约 4 行上下文完全匹配时才会成功；内容已变更、上下文不足或重复时不会执行重放。"
+                        >
+                          ?
+                        </span>
+                      </div>
+                      <button
+                        className={primaryButtonClass}
+                        type="button"
+                        onClick={() => void restoreHistoryCommit(selectedHistory)}
+                        disabled={!selectedPath || isProtectedFileReadOnly || restoringHash !== null}
+                      >
+                        {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
+                      </button>
+                    </div>
                   </div>
                   <DiffView
                     before={selectedHistory.beforeContent}
