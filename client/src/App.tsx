@@ -1,5 +1,5 @@
 import { EditorSelection } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import type { EditorView } from "@codemirror/view";
 import {
   parse as parseJson,
   printParseErrorCode,
@@ -7,22 +7,21 @@ import {
 } from "jsonc-parser";
 import {
   startTransition,
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type ComponentProps,
   type FormEvent,
   type PointerEvent as ReactPointerEvent
 } from "react";
 import { parseDocument } from "yaml";
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
-import {
-  ConfigEditor,
-  type ConfigEditorValidationIssue
-} from "./components/ConfigEditor";
-import { DiffView } from "./components/DiffView";
+import type { ConfigEditorValidationIssue } from "./components/ConfigEditor";
 import { FileTree } from "./components/FileTree";
 import { ToastStack } from "./components/ToastStack";
 import {
@@ -48,6 +47,7 @@ import type {
   AuthUser,
   BootstrapResponse,
   CommitSnapshot,
+  CommitSummary,
   EnvironmentReviewCommit,
   EnvironmentReviewDiff,
   FileConflictPayload,
@@ -91,6 +91,29 @@ type WheelGestureTarget = "page" | "editorSurface";
 interface WheelGestureLock {
   target: WheelGestureTarget;
   resetTimer: number | null;
+}
+
+const ConfigEditor = lazy(async () => ({
+  default: (await import("./components/ConfigEditor")).ConfigEditor
+}));
+const DiffView = lazy(async () => ({
+  default: (await import("./components/DiffView")).DiffView
+}));
+
+function LazyDiffView(props: ComponentProps<typeof DiffView>): JSX.Element {
+  return (
+    <Suspense fallback={<div className={cn(emptyBlockClass, props.className)}>正在加载差异预览...</div>}>
+      <DiffView {...props} />
+    </Suspense>
+  );
+}
+
+function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Element {
+  return (
+    <Suspense fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载编辑器...</div>}>
+      <ConfigEditor {...props} />
+    </Suspense>
+  );
 }
 
 class ApiRequestError extends Error {
@@ -356,6 +379,8 @@ export default function App(): JSX.Element {
   const [committing, setCommitting] = useState(false);
   const [confirmingCommit, setConfirmingCommit] = useState(false);
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string>("");
+  const [selectedHistoryDetail, setSelectedHistoryDetail] = useState<CommitSnapshot | null>(null);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [restoringHash, setRestoringHash] = useState<string | null>(null);
   const [pendingReplay, setPendingReplay] = useState<PendingReplay | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -414,6 +439,8 @@ export default function App(): JSX.Element {
     setSelectedReviewHash("");
     setSelectedReviewPath("");
     setReviewDiff(null);
+    setSelectedHistoryDetail(null);
+    setHistoryDetailLoading(false);
     setLiveNotice(null);
     setAccountMenuOpen(false);
     setActivationDialogOpen(false);
@@ -762,6 +789,40 @@ export default function App(): JSX.Element {
         : history[0].hash
     );
   }, [fileDetail?.path, fileDetail?.history]);
+
+  useEffect(() => {
+    if (!selectedPath || !selectedHistoryHash) {
+      setSelectedHistoryDetail(null);
+      setHistoryDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedHistoryDetail(null);
+    setHistoryDetailLoading(true);
+    void requestJson<CommitSnapshot>(
+      `/api/file/history?path=${encodeURIComponent(selectedPath)}&hash=${encodeURIComponent(selectedHistoryHash)}`
+    )
+      .then((detail) => {
+        if (!cancelled) {
+          setSelectedHistoryDetail(detail);
+        }
+      })
+      .catch((fetchError) => {
+        if (!cancelled && !handleAuthRequired(fetchError)) {
+          setError((fetchError as Error).message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setHistoryDetailLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPath, selectedHistoryHash]);
 
   useEffect(() => {
     if (!authUser) {
@@ -1487,7 +1548,7 @@ export default function App(): JSX.Element {
     !committing &&
     (editorDirty || Boolean(fileDetail?.isDirty));
   const fileHistory = fileDetail?.history ?? [];
-  const selectedHistory =
+  const selectedHistory: CommitSummary | null =
     fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
   const editorSearchMatches = useMemo(
     () => findTextMatches(editorContent, editorSearch),
@@ -2150,7 +2211,7 @@ export default function App(): JSX.Element {
                         {reviewDiffLoading ? (
                           <div className={emptyBlockClass}>正在加载文件差异...</div>
                         ) : reviewDiff ? (
-                          <DiffView
+                          <LazyDiffView
                             before={reviewDiff.beforeContent}
                             after={reviewDiff.afterContent}
                             emptyText="该文件在此提交中没有内容变化"
@@ -2260,7 +2321,7 @@ export default function App(): JSX.Element {
                     使用远程版本
                   </button>
                 </div>
-                <DiffView
+                <LazyDiffView
                   before={fileConflict.remoteContent}
                   after={fileConflict.localContent}
                   emptyText="远程版本与我的修改没有内容差异"
@@ -2291,7 +2352,7 @@ export default function App(): JSX.Element {
                     大文件模式下已暂停左侧实时差异渲染，避免加载和滚动卡死。提交、冲突检测仍使用右侧最新编辑内容。
                   </div>
                 ) : (
-                  <DiffView
+                  <LazyDiffView
                     before={pendingBaseContent}
                     after={diffPreviewContent}
                     emptyText={loading ? "正在加载..." : "当前文件没有未提交差异"}
@@ -2369,7 +2430,7 @@ export default function App(): JSX.Element {
                   >
                     校验 YAML
                   </button>
-                  <ConfigEditor
+                  <LazyConfigEditor
                     value={editorContent}
                     disabled={!selectedPath || isProtectedFileReadOnly}
                     placeholderText="请选择要编辑的文件"
@@ -2478,11 +2539,12 @@ export default function App(): JSX.Element {
                         <button
                           className={secondaryButtonClass}
                           type="button"
-                          onClick={() => extractHistoryReplay(selectedHistory)}
+                          onClick={() => selectedHistoryDetail && extractHistoryReplay(selectedHistoryDetail)}
                           disabled={
                             !selectedPath ||
                             authUser?.role !== "admin" ||
-                            selectedHistory.beforeContent === selectedHistory.afterContent
+                            !selectedHistoryDetail ||
+                            selectedHistoryDetail.beforeContent === selectedHistoryDetail.afterContent
                           }
                         >
                           {pendingReplay?.hash === selectedHistory.hash && pendingReplay.sourcePath === selectedPath
@@ -2499,19 +2561,25 @@ export default function App(): JSX.Element {
                       <button
                         className={primaryButtonClass}
                         type="button"
-                        onClick={() => void restoreHistoryCommit(selectedHistory)}
-                        disabled={!selectedPath || isProtectedFileReadOnly || restoringHash !== null}
+                        onClick={() => selectedHistoryDetail && void restoreHistoryCommit(selectedHistoryDetail)}
+                        disabled={!selectedPath || isProtectedFileReadOnly || restoringHash !== null || !selectedHistoryDetail}
                       >
                         {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
                       </button>
                     </div>
                   </div>
-                  <DiffView
-                    before={selectedHistory.beforeContent}
-                    after={selectedHistory.afterContent}
-                    emptyText="该提交没有内容变化"
-                    className="max-h-[520px] overflow-auto"
-                  />
+                  {historyDetailLoading ? (
+                    <div className={emptyBlockClass}>正在加载历史差异...</div>
+                  ) : selectedHistoryDetail ? (
+                    <LazyDiffView
+                      before={selectedHistoryDetail.beforeContent}
+                      after={selectedHistoryDetail.afterContent}
+                      emptyText="该提交没有内容变化"
+                      className="max-h-[520px] overflow-auto"
+                    />
+                  ) : (
+                    <div className={emptyBlockClass}>历史差异加载失败，请重新选择该提交</div>
+                  )}
                 </div>
               </div>
             ) : (

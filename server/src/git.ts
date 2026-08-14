@@ -18,6 +18,7 @@ import {
 import { validateConfigFileContent } from "./fileValidation";
 import type {
   AppConfig,
+  CommitSummary,
   CommitSnapshot,
   FileConflictPayload,
   FileDetail,
@@ -529,11 +530,11 @@ async function readGitRef(repoPath: string, ref: string): Promise<string | null>
   return output.trim() || null;
 }
 
-async function readFileHistorySnapshots(
+async function readFileHistory(
   repoPath: string,
   repoRelativePath: string,
   limit = 20
-): Promise<CommitSnapshot[]> {
+): Promise<CommitSummary[]> {
   const rawMeta = await runGit(
     [
       "log",
@@ -555,27 +556,62 @@ async function readFileHistorySnapshots(
     .map((record) => record.trim())
     .filter(Boolean);
 
-  return Promise.all(
-    records.map(async (record) => {
+  return records.map((record) => {
       const [hash, authorName, authorEmail, committedAt, ...messageParts] =
         record.split("\x1f");
       const message = messageParts.join("\x1f").trim();
-      const [beforeContent, afterContent] = await Promise.all([
-        readGitFile(repoPath, `${hash}^`, repoRelativePath),
-        readGitFile(repoPath, hash, repoRelativePath)
-      ]);
-
       return {
         hash,
         authorName,
         authorEmail,
         committedAt,
-        message,
-        beforeContent,
-        afterContent
+        message
       };
-    })
-  );
+    });
+}
+
+export async function readFileHistorySnapshot(
+  config: AppConfig,
+  filePath: string,
+  hash: string
+): Promise<CommitSnapshot> {
+  const repoPath = resolveRepoPath(config);
+  const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
+  const normalizedHash = hash.trim();
+  if (!/^[0-9a-f]{7,40}$/i.test(normalizedHash)) {
+    throw new Error("历史版本标识无效");
+  }
+
+  const rawMeta = await runGit(
+    [
+      "log",
+      "-1",
+      "--format=%H%x1f%an%x1f%ae%x1f%ad%x1f%B",
+      "--date=iso-strict",
+      normalizedHash,
+      "--",
+      repoRelativePath
+    ],
+    { cwd: repoPath }
+  ).catch(() => "");
+  if (!rawMeta) {
+    throw new Error("所选历史版本不包含当前文件");
+  }
+
+  const [hashValue, authorName, authorEmail, committedAt, ...messageParts] = rawMeta.split("\x1f");
+  const [beforeContent, afterContent] = await Promise.all([
+    readGitFile(repoPath, `${normalizedHash}^`, repoRelativePath),
+    readGitFile(repoPath, normalizedHash, repoRelativePath)
+  ]);
+  return {
+    hash: hashValue,
+    authorName,
+    authorEmail,
+    committedAt,
+    message: messageParts.join("\x1f").trim(),
+    beforeContent,
+    afterContent
+  };
 }
 
 function parseReviewFileLine(
@@ -709,7 +745,7 @@ export async function readFileDetail(
         () => ""
       ),
       stat(absolutePath),
-      readFileHistorySnapshots(repoPath, repoRelativePath),
+      readFileHistory(repoPath, repoRelativePath),
       readGitRef(repoPath, "HEAD"),
       readGitBlobId(repoPath, "HEAD", repoRelativePath),
       readGitRef(repoPath, `origin/${config.repo.branch}`),

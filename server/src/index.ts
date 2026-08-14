@@ -23,6 +23,7 @@ import {
   readEnvironmentReviewCommits,
   readEnvironmentReviewDiff,
   readFileDetail,
+  readFileHistorySnapshot,
   repoExists,
   restoreFileToHistoryCommit,
   syncRepo
@@ -207,6 +208,22 @@ app.get("/api/file", async (request, response, next) => {
 
     const config = await loadAppConfig();
     response.json(await readFileDetail(config, filePath));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/file/history", async (request, response, next) => {
+  try {
+    const filePath = String(request.query.path ?? "").trim();
+    const hash = String(request.query.hash ?? "").trim();
+    if (!filePath || !hash) {
+      response.status(400).json({ error: "缺少文件路径或历史版本标识" });
+      return;
+    }
+
+    const config = await loadAppConfig();
+    response.json(await readFileHistorySnapshot(config, filePath, hash));
   } catch (error) {
     next(error);
   }

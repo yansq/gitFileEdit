@@ -53,12 +53,15 @@ export interface RepoEnvironmentOption {
   requiresAdminToEdit: boolean;
 }
 
-export interface CommitSnapshot {
+export interface CommitSummary {
   hash: string;
   authorName: string;
   authorEmail: string;
   committedAt: string;
   message: string;
+}
+
+export interface CommitSnapshot extends CommitSummary {
   beforeContent: string;
   afterContent: string;
 }
@@ -95,8 +98,8 @@ export interface FileDetail {
   remoteBlob: string | null;
   isDirty: boolean;
   modifiedAt: string;
-  lastCommit: CommitSnapshot | null;
-  history: CommitSnapshot[];
+  lastCommit: CommitSummary | null;
+  history: CommitSummary[];
 }
 
 export interface FileConflictPayload {
