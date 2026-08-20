@@ -29,7 +29,7 @@ import {
   getPathWithinRoot,
   replaceEnvironmentRoot
 } from "./lib/filePaths";
-import { formatTime, getCommitBody, getCommitSubject } from "./lib/format";
+import { formatTime, getCommitSubject } from "./lib/format";
 import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
 import {
   cn,
@@ -80,24 +80,14 @@ const fileListMinWidth = 260;
 const fileListDefaultWidth = 320;
 const fileListMaxWidth = 560;
 const mainContentMinWidth = 520;
-const diffPreviewDebounceMs = 280;
-const largeDiffPreviewThreshold = 200 * 1024;
-const diffLineAlignmentOffset = -3;
-const wheelGestureIdleMs = 600;
-const wheelLineDeltaPx = 16;
-
-type WheelGestureTarget = "page" | "editorSurface";
-
-interface WheelGestureLock {
-  target: WheelGestureTarget;
-  resetTimer: number | null;
-}
-
 const ConfigEditor = lazy(async () => ({
   default: (await import("./components/ConfigEditor")).ConfigEditor
 }));
 const DiffView = lazy(async () => ({
   default: (await import("./components/DiffView")).DiffView
+}));
+const MergeConfigEditor = lazy(async () => ({
+  default: (await import("./components/MergeConfigEditor")).MergeConfigEditor
 }));
 
 function LazyDiffView(props: ComponentProps<typeof DiffView>): JSX.Element {
@@ -112,6 +102,14 @@ function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Eleme
   return (
     <Suspense fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载编辑器...</div>}>
       <ConfigEditor {...props} />
+    </Suspense>
+  );
+}
+
+function LazyMergeConfigEditor(props: ComponentProps<typeof MergeConfigEditor>): JSX.Element {
+  return (
+    <Suspense fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载差异编辑器...</div>}>
+      <MergeConfigEditor {...props} />
     </Suspense>
   );
 }
@@ -199,33 +197,11 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function countLines(value: string): number {
-  if (!value) {
-    return 1;
-  }
-
-  let count = 1;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value.charCodeAt(index) === 10) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
 function toDateInputValue(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function clampRatio(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  return Math.min(Math.max(value, 0), 1);
 }
 
 function findTextMatches(content: string, query: string): Array<{ from: number; to: number }> {
@@ -346,12 +322,8 @@ function getEditorValidationIssue(
 }
 
 export default function App(): JSX.Element {
-  const pendingDiffRef = useRef<HTMLDivElement>(null);
   const editorSurfaceRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
-  const wheelGestureRef = useRef<WheelGestureLock | null>(null);
-  const diffPreviewTimerRef = useRef<number | null>(null);
-  const isLargeDiffPreviewRef = useRef(false);
   const layoutRef = useRef<HTMLDivElement>(null);
   const reviewRequestIdRef = useRef(0);
   const reviewDiffRequestIdRef = useRef(0);
@@ -361,10 +333,8 @@ export default function App(): JSX.Element {
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
   const [editorContent, setEditorContent] = useState("");
-  const [diffPreviewContent, setDiffPreviewContent] = useState("");
+  const [editorViewMode, setEditorViewMode] = useState<"diff" | "editor">("editor");
   const [editorDirty, setEditorDirty] = useState(false);
-  const [isLargeDiffPreview, setIsLargeDiffPreview] = useState(false);
-  const [isDiffPreviewStale, setIsDiffPreviewStale] = useState(false);
   const [editorSearchInput, setEditorSearchInput] = useState("");
   const [editorSearch, setEditorSearch] = useState("");
   const [editorSearchIndex, setEditorSearchIndex] = useState(-1);
@@ -387,7 +357,6 @@ export default function App(): JSX.Element {
   const [showRepoDetails, setShowRepoDetails] = useState(false);
   const [fileListWidth, setFileListWidth] = useState(fileListDefaultWidth);
   const [resizingFileList, setResizingFileList] = useState(false);
-  const [currentEditorLine, setCurrentEditorLine] = useState(1);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveNotice, setLiveNotice] = useState<string | null>(null);
@@ -425,12 +394,7 @@ export default function App(): JSX.Element {
     setSelectedPath("");
     setFileDetail(null);
     setEditorContent("");
-    setDiffPreviewContent("");
     setEditorDirty(false);
-    setIsDiffPreviewStale(false);
-    clearDiffPreviewTimer();
-    setLargeDiffPreviewMode(false);
-    setCurrentEditorLine(1);
     setFileConflict(null);
     setFileValidationError(null);
     setPendingReplay(null);
@@ -461,133 +425,10 @@ export default function App(): JSX.Element {
     return false;
   }
 
-  function clearDiffPreviewTimer(): void {
-    if (diffPreviewTimerRef.current !== null) {
-      window.clearTimeout(diffPreviewTimerRef.current);
-      diffPreviewTimerRef.current = null;
-    }
-  }
-
   function getLatestEditorContent(): string {
     return editorViewRef.current?.state.doc.toString() ?? editorContent;
   }
 
-  function setLargeDiffPreviewMode(nextValue: boolean): void {
-    if (isLargeDiffPreviewRef.current === nextValue) {
-      return;
-    }
-
-    isLargeDiffPreviewRef.current = nextValue;
-    setIsLargeDiffPreview(nextValue);
-  }
-
-  function updateLargeDiffPreviewMode(contentLength: number): boolean {
-    const nextValue = pendingBaseContent.length + contentLength > largeDiffPreviewThreshold;
-    setLargeDiffPreviewMode(nextValue);
-    return nextValue;
-  }
-
-  function scheduleDiffPreviewUpdate(view: EditorView): void {
-    const nextIsLarge = updateLargeDiffPreviewMode(view.state.doc.length);
-    clearDiffPreviewTimer();
-    if (nextIsLarge) {
-      return;
-    }
-
-    diffPreviewTimerRef.current = window.setTimeout(() => {
-      diffPreviewTimerRef.current = null;
-      const nextContent = view.state.doc.toString();
-      startTransition(() => {
-        setDiffPreviewContent(nextContent);
-        setIsDiffPreviewStale(false);
-      });
-    }, diffPreviewDebounceMs);
-  }
-
-  function scrollPendingDiffToRatio(ratio: number): void {
-    const diffElement = pendingDiffRef.current;
-    if (!diffElement) {
-      return;
-    }
-
-    const maxScrollTop = diffElement.scrollHeight - diffElement.clientHeight;
-    if (maxScrollTop <= 0) {
-      return;
-    }
-
-    diffElement.scrollTop = Math.max(0, Math.min(maxScrollTop, maxScrollTop * ratio));
-  }
-
-  function getDiffViewportTop(viewportTop: number): number {
-    const diffElement = pendingDiffRef.current;
-    const editorElement = editorViewRef.current?.scrollDOM;
-    if (!diffElement || !editorElement) {
-      return viewportTop;
-    }
-
-    const diffTop = diffElement.getBoundingClientRect().top;
-    const editorTop = editorElement.getBoundingClientRect().top;
-    return Math.max(0, viewportTop + editorTop - diffTop + diffLineAlignmentOffset);
-  }
-
-  function scrollPendingDiffToEditorLine(
-    lineNumber: number,
-    options: { viewportTop?: number; lineProgress?: number } = {}
-  ): boolean {
-    const diffElement = pendingDiffRef.current;
-    if (!diffElement) {
-      return false;
-    }
-
-    const target = diffElement.querySelector<HTMLElement>(`[data-after-line="${lineNumber}"]`);
-    if (!target) {
-      return false;
-    }
-
-    const maxScrollTop = diffElement.scrollHeight - diffElement.clientHeight;
-    const viewportTop = getDiffViewportTop(options.viewportTop ?? 8);
-    const lineProgress = clampRatio(options.lineProgress ?? 0);
-    const diffRect = diffElement.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const targetTop = targetRect.top - diffRect.top + diffElement.scrollTop;
-    diffElement.scrollTop = Math.max(
-      0,
-      Math.min(maxScrollTop, targetTop + targetRect.height * lineProgress - viewportTop)
-    );
-    return true;
-  }
-
-  function scrollPendingDiffForEditorLine(
-    lineNumber: number,
-    options: { viewportTop?: number; lineProgress?: number } = {}
-  ): void {
-    const lineIndex = Math.max(0, lineNumber - 1);
-    setCurrentEditorLine(lineNumber);
-
-    if (isLargeDiffPreview || !scrollPendingDiffToEditorLine(lineNumber, options)) {
-      const totalLines = editorViewRef.current?.state.doc.lines ?? countLines(editorContent);
-      const ratio = totalLines <= 1 ? 0 : lineIndex / (totalLines - 1);
-      scrollPendingDiffToRatio(ratio);
-    }
-  }
-
-  function syncPendingDiffToEditorCursor(
-    lineNumber: number,
-    viewportTop: number,
-    lineProgress: number
-  ): void {
-    window.requestAnimationFrame(() => {
-      scrollPendingDiffForEditorLine(lineNumber, { viewportTop, lineProgress });
-    });
-  }
-
-  function syncPendingDiffToEditorScroll(
-    lineNumber: number,
-    viewportTop: number,
-    lineProgress: number
-  ): void {
-    scrollPendingDiffForEditorLine(lineNumber, { viewportTop, lineProgress });
-  }
 
   function startFileListResize(event: ReactPointerEvent<HTMLButtonElement>): void {
     if (window.matchMedia("(max-width: 960px)").matches) {
@@ -633,12 +474,7 @@ export default function App(): JSX.Element {
       startTransition(() => {
         setFileDetail(null);
         setEditorContent("");
-        setDiffPreviewContent("");
         setEditorDirty(false);
-        setIsDiffPreviewStale(false);
-        clearDiffPreviewTimer();
-        setLargeDiffPreviewMode(false);
-        setCurrentEditorLine(1);
         setFileConflict(null);
         setFileValidationError(null);
       });
@@ -653,14 +489,7 @@ export default function App(): JSX.Element {
       setFileDetail(detail);
       if (!preserveDraft || !editorDirty) {
         setEditorContent(detail.content);
-        setDiffPreviewContent(detail.content);
         setEditorDirty(false);
-        setIsDiffPreviewStale(false);
-        clearDiffPreviewTimer();
-        setLargeDiffPreviewMode(
-          detail.headContent.length + detail.content.length > largeDiffPreviewThreshold
-        );
-        setCurrentEditorLine(1);
         setFileConflict(null);
         setFileValidationError(null);
       }
@@ -697,84 +526,6 @@ export default function App(): JSX.Element {
       setError((fetchError as Error).message);
     });
   }, [selectedPath]);
-
-  useEffect(() => {
-    function isEditorSurfaceTarget(target: EventTarget | null): boolean {
-      if (!(target instanceof Node)) {
-        return false;
-      }
-
-      return Boolean(
-        pendingDiffRef.current?.contains(target) ||
-          editorSurfaceRef.current?.contains(target) ||
-          editorViewRef.current?.scrollDOM.contains(target)
-      );
-    }
-
-    function getScrollDelta(delta: number, deltaMode: number, pageSize: number): number {
-      if (deltaMode === 1) {
-        return delta * wheelLineDeltaPx;
-      }
-
-      if (deltaMode === 2) {
-        return delta * pageSize;
-      }
-
-      return delta;
-    }
-
-    function resetWheelGestureLater(lock: WheelGestureLock): void {
-      if (lock.resetTimer !== null) {
-        window.clearTimeout(lock.resetTimer);
-      }
-
-      lock.resetTimer = window.setTimeout(() => {
-        if (wheelGestureRef.current === lock) {
-          wheelGestureRef.current = null;
-        }
-      }, wheelGestureIdleMs);
-    }
-
-    function handleWheel(event: WheelEvent): void {
-      if (event.ctrlKey) {
-        return;
-      }
-
-      let lock = wheelGestureRef.current;
-      if (!lock) {
-        lock = {
-          target: isEditorSurfaceTarget(event.target) ? "editorSurface" : "page",
-          resetTimer: null
-        };
-        wheelGestureRef.current = lock;
-      }
-
-      resetWheelGestureLater(lock);
-
-      if (lock.target !== "page" || !isEditorSurfaceTarget(event.target)) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      window.scrollBy({
-        left: getScrollDelta(event.deltaX, event.deltaMode, window.innerWidth),
-        top: getScrollDelta(event.deltaY, event.deltaMode, window.innerHeight),
-        behavior: "auto"
-      });
-    }
-
-    window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
-
-    return () => {
-      const lock = wheelGestureRef.current;
-      if (lock && lock.resetTimer !== null) {
-        window.clearTimeout(lock.resetTimer);
-      }
-      wheelGestureRef.current = null;
-      window.removeEventListener("wheel", handleWheel, { capture: true });
-    };
-  }, []);
 
   useEffect(() => {
     const history = fileDetail?.history ?? [];
@@ -978,13 +729,7 @@ export default function App(): JSX.Element {
       startTransition(() => {
         setFileDetail(detail);
         setEditorContent(detail.content);
-        setDiffPreviewContent(detail.content);
         setEditorDirty(false);
-        clearDiffPreviewTimer();
-        setLargeDiffPreviewMode(
-          detail.headContent.length + detail.content.length > largeDiffPreviewThreshold
-        );
-        setCurrentEditorLine(1);
       });
       setSelectedHistoryHash(detail.history[0]?.hash ?? "");
       setMessage("已丢弃当前文件的未提交修改");
@@ -1114,17 +859,9 @@ export default function App(): JSX.Element {
       return;
     }
 
-    clearDiffPreviewTimer();
-    const nextIsLarge = updateLargeDiffPreviewMode(replayedContent.length);
     setEditorContent(replayedContent);
     setEditorDirty(true);
     setFileValidationError(null);
-    if (nextIsLarge) {
-      setIsDiffPreviewStale(true);
-    } else {
-      setDiffPreviewContent(replayedContent);
-      setIsDiffPreviewStale(false);
-    }
     setError(null);
     setMessage(`已重放 ${pendingReplay.hash.slice(0, 8)} 的修改，尚未提交`);
   }
@@ -1513,9 +1250,7 @@ export default function App(): JSX.Element {
     () =>
       normalizedFileQuery
         ? visibleFiles.filter((file) => {
-          const relativePath =
-            activeEnvironment ? getPathWithinRoot(file.path, activeEnvironment.root) : file.path;
-          const searchTarget = `${file.path}\n${relativePath ?? ""}\n${file.path.split("/").pop() ?? ""}`.toLocaleLowerCase();
+          const searchTarget = (file.path.split("/").pop() ?? "").toLocaleLowerCase();
           return searchTarget.includes(normalizedFileQuery);
         })
         : visibleFiles,
@@ -1534,11 +1269,6 @@ export default function App(): JSX.Element {
   );
   const repoReady = bootstrap?.repoStatus.ready ?? false;
   const pendingBaseContent = fileDetail?.headContent ?? "";
-  const diffPreviewStatusText = isDiffPreviewStale
-    ? isLargeDiffPreview
-      ? "大文件模式已关闭实时差异预览"
-      : "差异预览稍后刷新"
-    : null;
   const hasPendingChanges =
     Boolean(selectedPath) &&
     (editorDirty || pendingBaseContent !== (fileDetail?.content ?? ""));
@@ -1563,8 +1293,6 @@ export default function App(): JSX.Element {
   const workspaceLayoutStyle = {
     "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`
   } as CSSProperties;
-
-  useEffect(() => clearDiffPreviewTimer, []);
 
   useEffect(() => {
     setEditorSearchIndex((current) => {
@@ -1597,11 +1325,6 @@ export default function App(): JSX.Element {
       Math.min(maxScrollTop, block.top - view.scrollDOM.clientHeight / 2 + block.height / 2)
     );
     view.scrollDOM.scrollTop = nextScrollTop;
-    window.requestAnimationFrame(() => {
-      scrollPendingDiffForEditorLine(line.number, {
-        viewportTop: Math.max(0, block.top - nextScrollTop)
-      });
-    });
   }
 
   function findAdjacentEditorSearchMatch(direction: -1 | 1): void {
@@ -1609,10 +1332,13 @@ export default function App(): JSX.Element {
       return;
     }
 
+    const currentContent = getLatestEditorContent();
+    if (currentContent !== editorContent) {
+      setEditorContent(currentContent);
+    }
     const isNewSearch = editorSearchInput !== editorSearch;
-    const matches = isNewSearch
-      ? findTextMatches(editorContent, editorSearchInput)
-      : editorSearchMatches;
+    const query = isNewSearch ? editorSearchInput : editorSearch;
+    const matches = findTextMatches(currentContent, query);
 
     if (isNewSearch) {
       setEditorSearch(editorSearchInput);
@@ -2069,7 +1795,6 @@ export default function App(): JSX.Element {
                 nodes={fileTree}
                 selectedPath={selectedPath}
                 onSelect={setSelectedPath}
-                forceOpen={Boolean(normalizedFileQuery)}
               />
             )}
           </div>
@@ -2292,14 +2017,7 @@ export default function App(): JSX.Element {
                     type="button"
                     onClick={() => {
                       setEditorContent(fileConflict.remoteContent);
-                      setDiffPreviewContent(fileConflict.remoteContent);
                       setEditorDirty(false);
-                      setIsDiffPreviewStale(false);
-                      clearDiffPreviewTimer();
-                      setLargeDiffPreviewMode(
-                        fileConflict.remoteContent.length * 2 > largeDiffPreviewThreshold
-                      );
-                      setCurrentEditorLine(1);
                       setFileDetail((current) =>
                         current
                           ? {
@@ -2329,87 +2047,99 @@ export default function App(): JSX.Element {
               </div>
             ) : null}
 
-            <div className="grid gap-[18px] min-[961px]:grid-cols-2">
-              <div className="grid content-start gap-3">
-                <div className="flex min-h-11 flex-wrap items-center gap-2">
-                  <div className="font-bold text-[#20404a]">原始文件</div>
-                  {selectedPath && !hasPendingChanges ? (
-                    <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
-                      当前文件没有未提交差异
-                    </span>
-                  ) : null}
-                  {diffPreviewStatusText ? (
-                    <span className="inline-flex items-center rounded-full bg-[#d8a21b]/15 px-3 py-1.5 text-xs text-[#785918]">
-                      {diffPreviewStatusText}
-                    </span>
-                  ) : null}
-                </div>
-                {isLargeDiffPreview ? (
-                  <div
-                    ref={pendingDiffRef}
-                    className={cn(emptyBlockClass, editorSurfaceHeightClass, "grid content-center")}
-                  >
-                    大文件模式下已暂停左侧实时差异渲染，避免加载和滚动卡死。提交、冲突检测仍使用右侧最新编辑内容。
-                  </div>
-                ) : (
-                  <LazyDiffView
-                    before={pendingBaseContent}
-                    after={diffPreviewContent}
-                    emptyText={loading ? "正在加载..." : "当前文件没有未提交差异"}
-                    className={editorSurfaceHeightClass}
-                    scrollRef={pendingDiffRef}
-                    showContentWhenUnchanged
-                    highlightAfterLine={isDiffPreviewStale ? null : currentEditorLine}
-                  />
-                )}
+            <div className="flex min-w-0 items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+              <input
+                className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm font-normal text-[#183039] outline-none placeholder:text-[#8b9aa1]"
+                value={editorSearchInput}
+                onChange={(event) => setEditorSearchInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
+                  }
+                }}
+                placeholder="搜索在线编辑内容"
+                disabled={!selectedPath}
+              />
+              <span className="shrink-0 rounded-lg bg-[#143138]/[0.06] px-2 py-1 text-center text-xs font-semibold text-[#6c7d84]">
+                {editorSearch ? `${editorSearchIndex + 1 || 0}/${editorSearchMatches.length}` : "0/0"}
+              </span>
+              <button
+                type="button"
+                className="h-8 shrink-0 rounded-xl border-0 bg-[#143138]/[0.07] px-3 text-sm font-semibold text-[#24424a] transition duration-200 hover:bg-[#143138]/[0.12] disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={() => findAdjacentEditorSearchMatch(-1)}
+                disabled={!selectedPath || !editorSearchInput}
+              >
+                查找上一处
+              </button>
+              <button
+                type="button"
+                className="h-8 shrink-0 rounded-xl border-0 bg-[#0e6b72] px-3 text-sm font-semibold text-white transition duration-200 hover:bg-[#0b5b61] disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={() => findAdjacentEditorSearchMatch(1)}
+                disabled={!selectedPath || !editorSearchInput}
+              >
+                查找下一处
+              </button>
+              <div className="ml-1 flex shrink-0 rounded-xl bg-[#143138]/[0.07] p-0.5" aria-label="编辑视图">
+                <button
+                  type="button"
+                  className={cn(
+                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
+                    editorViewMode === "diff"
+                      ? "bg-white text-[#183039] shadow-sm"
+                      : "text-[#6c7d84] hover:text-[#24424a]"
+                  )}
+                  onClick={() => setEditorViewMode("diff")}
+                  aria-pressed={editorViewMode === "diff"}
+                >
+                  对比
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
+                    editorViewMode === "editor"
+                      ? "bg-white text-[#183039] shadow-sm"
+                      : "text-[#6c7d84] hover:text-[#24424a]"
+                  )}
+                  onClick={() => setEditorViewMode("editor")}
+                  aria-pressed={editorViewMode === "editor"}
+                >
+                  纯编辑
+                </button>
               </div>
+            </div>
 
-              <div className="grid content-start gap-3">
-                <div className="flex min-h-11 min-w-0 items-center gap-3 text-[#20404a]">
-                  <div className="shrink-0 font-bold">在线编辑</div>
-                  {isProtectedFileReadOnly ? (
-                    <span className="shrink-0 rounded-full bg-[#143138]/[0.08] px-2.5 py-1 text-xs font-semibold text-[#53676e]">
-                      只读
-                    </span>
-                  ) : null}
-                  <div className="ml-auto flex min-w-0 flex-1 items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-                    <input
-                      className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm font-normal text-[#183039] outline-none placeholder:text-[#8b9aa1]"
-                      value={editorSearchInput}
-                      onChange={(event) => setEditorSearchInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
-                        }
-                      }}
-                      placeholder="搜索在线编辑内容"
-                      disabled={!selectedPath}
-                    />
-                    <span className="shrink-0 rounded-lg bg-[#143138]/[0.06] px-2 py-1 text-center text-xs font-semibold text-[#6c7d84]">
-                      {editorSearch ? `${editorSearchIndex + 1 || 0}/${editorSearchMatches.length}` : "0/0"}
-                    </span>
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-xl border-0 bg-[#143138]/[0.07] px-3 text-sm font-semibold text-[#24424a] transition duration-200 hover:bg-[#143138]/[0.12] disabled:cursor-not-allowed disabled:opacity-45"
-                      onClick={() => findAdjacentEditorSearchMatch(-1)}
-                      disabled={!selectedPath || !editorSearchInput}
-                    >
-                      查找上一处
-                    </button>
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-xl border-0 bg-[#0e6b72] px-3 text-sm font-semibold text-white transition duration-200 hover:bg-[#0b5b61] disabled:cursor-not-allowed disabled:opacity-45"
-                      onClick={() => findAdjacentEditorSearchMatch(1)}
-                      disabled={!selectedPath || !editorSearchInput}
-                    >
-                      查找下一处
-                    </button>
-                  </div>
+            <div className="mt-3 overflow-hidden rounded-[22px] border border-[#183039]/10">
+              {editorViewMode === "diff" ? (
+                <div ref={editorSurfaceRef} className="relative h-[62vh] min-h-[360px] max-h-[640px] overflow-hidden bg-[#fafcfb]/95">
+                  <LazyMergeConfigEditor
+                    original={pendingBaseContent}
+                    value={editorContent}
+                    disabled={!selectedPath || isProtectedFileReadOnly}
+                    placeholderText="请选择要编辑的文件"
+                    validationIssue={editorValidationIssue}
+                    onViewReady={(view) => { editorViewRef.current = view; }}
+                    onChange={(view) => {
+                      setEditorDirty(true);
+                      setFileValidationError(null);
+                      setEditorContent(view.state.doc.toString());
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={validateEditorAsYaml}
+                    disabled={!selectedPath}
+                  >
+                    校验 YAML
+                  </button>
                 </div>
+              ) : (
+              <div key="editor" className="grid content-start gap-3">
                 <div
                   ref={editorSurfaceRef}
-                  className={cn("relative overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95", editorSurfaceHeightClass)}
+                  className={cn("relative overflow-hidden bg-[#fafcfb]/95", editorSurfaceHeightClass)}
                 >
                   {pendingReplay ? (
                     <button
@@ -2439,14 +2169,10 @@ export default function App(): JSX.Element {
                       editorViewRef.current = view;
                     }}
                     onChange={(view) => {
-                      setEditorContent(view.state.doc.toString());
                       setEditorDirty(true);
-                      setIsDiffPreviewStale(true);
                       setFileValidationError(null);
-                      scheduleDiffPreviewUpdate(view);
+                      setEditorContent(view.state.doc.toString());
                     }}
-                    onCursorLineChange={syncPendingDiffToEditorCursor}
-                    onViewportLineChange={syncPendingDiffToEditorScroll}
                   />
                 </div>
                 {fileValidationError ? (
@@ -2462,6 +2188,7 @@ export default function App(): JSX.Element {
                   </div>
                 ) : null}
               </div>
+              )}
             </div>
           </section>
 
@@ -2528,11 +2255,6 @@ export default function App(): JSX.Element {
                           {selectedHistory.hash}
                         </span>
                       </div>
-                      {getCommitBody(selectedHistory.message) ? (
-                        <div className="mt-3 whitespace-pre-wrap break-words rounded-2xl border border-[#183039]/10 bg-[#f6f9f7]/85 px-3.5 py-3 text-sm leading-6 text-[#40545b]">
-                          {getCommitBody(selectedHistory.message)}
-                        </div>
-                      ) : null}
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <div className="flex items-center gap-1">
@@ -2575,6 +2297,7 @@ export default function App(): JSX.Element {
                       before={selectedHistoryDetail.beforeContent}
                       after={selectedHistoryDetail.afterContent}
                       emptyText="该提交没有内容变化"
+                      display="unified"
                       className="max-h-[520px] overflow-auto"
                     />
                   ) : (

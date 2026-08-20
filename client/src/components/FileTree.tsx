@@ -8,7 +8,6 @@ export function FileTree(props: {
   nodes: FileTreeNode[];
   selectedPath: string;
   onSelect: (path: string) => void;
-  forceOpen?: boolean;
   level?: number;
 }): JSX.Element {
   const level = props.level ?? 0;
@@ -22,7 +21,6 @@ export function FileTree(props: {
           selectedPath={props.selectedPath}
           onSelect={props.onSelect}
           level={level}
-          forceOpen={props.forceOpen ?? false}
         />
       ))}
     </div>
@@ -34,11 +32,10 @@ function FileTreeRow(props: {
   selectedPath: string;
   onSelect: (path: string) => void;
   level: number;
-  forceOpen: boolean;
 }): JSX.Element {
   const containsSelected = nodeContainsPath(props.node, props.selectedPath);
   const [open, setOpen] = useState(true);
-  const isOpen = props.forceOpen || open;
+  const isOpen = open;
   const indent = 6 + props.level * 10;
 
   if (props.node.kind === "directory") {
@@ -69,7 +66,6 @@ function FileTreeRow(props: {
             selectedPath={props.selectedPath}
             onSelect={props.onSelect}
             level={props.level + 1}
-            forceOpen={props.forceOpen}
           />
         ) : null}
       </div>
