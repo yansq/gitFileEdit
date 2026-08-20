@@ -1,4 +1,5 @@
 import { EditorSelection } from "@codemirror/state";
+import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
 import type { EditorView } from "@codemirror/view";
 import {
   parse as parseJson,
@@ -1359,6 +1360,22 @@ export default function App(): JSX.Element {
     scrollToEditorSearchMatch(matches[nextIndex]);
   }
 
+  function goToAdjacentChange(direction: -1 | 1): void {
+    const view = editorViewRef.current;
+    if (!view || editorViewMode !== "diff") {
+      return;
+    }
+    const moved = (direction > 0 ? goToNextChunk : goToPreviousChunk)({
+      state: view.state,
+      dispatch: view.dispatch
+    });
+    if (moved) {
+      const lineEnd = view.state.doc.lineAt(view.state.selection.main.head).to;
+      view.dispatch({ selection: EditorSelection.cursor(lineEnd) });
+      view.focus();
+    }
+  }
+
   function validateEditorAsYaml(): void {
     if (!selectedPath) {
       return;
@@ -2047,7 +2064,7 @@ export default function App(): JSX.Element {
               </div>
             ) : null}
 
-            <div className="flex min-w-0 items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+            <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
               <input
                 className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm font-normal text-[#183039] outline-none placeholder:text-[#8b9aa1]"
                 value={editorSearchInput}
@@ -2080,6 +2097,33 @@ export default function App(): JSX.Element {
               >
                 查找下一处
               </button>
+              <div
+                className={cn(
+                  "ml-2 flex shrink-0 items-center gap-1 border-l border-[#0e6b72]/20 pl-2",
+                  editorViewMode === "diff" ? "" : "pointer-events-none invisible"
+                )}
+                aria-label="差异导航"
+                aria-hidden={editorViewMode !== "diff"}
+              >
+                <button
+                  type="button"
+                  className="h-8 rounded-xl border border-[#0e6b72]/20 bg-[#e6f3f1] px-2.5 text-xs font-semibold text-[#0b5b61] transition duration-200 hover:bg-[#d8ece9] disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() => goToAdjacentChange(-1)}
+                  disabled={!selectedPath}
+                  title="定位到上一个差异块"
+                >
+                  ↑ 上个差异
+                </button>
+                <button
+                  type="button"
+                  className="h-8 rounded-xl border-0 bg-[#0b6f67] px-2.5 text-xs font-semibold text-white transition duration-200 hover:bg-[#095c56] disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() => goToAdjacentChange(1)}
+                  disabled={!selectedPath}
+                  title="定位到下一个差异块"
+                >
+                  ↓ 下个差异
+                </button>
+              </div>
               <div className="ml-1 flex shrink-0 rounded-xl bg-[#143138]/[0.07] p-0.5" aria-label="编辑视图">
                 <button
                   type="button"
