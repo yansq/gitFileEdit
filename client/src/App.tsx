@@ -2129,19 +2129,6 @@ export default function App(): JSX.Element {
                   type="button"
                   className={cn(
                     "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
-                    editorViewMode === "diff"
-                      ? "bg-white text-[#183039] shadow-sm"
-                      : "text-[#6c7d84] hover:text-[#24424a]"
-                  )}
-                  onClick={() => setEditorViewMode("diff")}
-                  aria-pressed={editorViewMode === "diff"}
-                >
-                  对比
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
                     editorViewMode === "editor"
                       ? "bg-white text-[#183039] shadow-sm"
                       : "text-[#6c7d84] hover:text-[#24424a]"
@@ -2150,6 +2137,19 @@ export default function App(): JSX.Element {
                   aria-pressed={editorViewMode === "editor"}
                 >
                   纯编辑
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
+                    editorViewMode === "diff"
+                      ? "bg-white text-[#183039] shadow-sm"
+                      : "text-[#6c7d84] hover:text-[#24424a]"
+                  )}
+                  onClick={() => setEditorViewMode("diff")}
+                  aria-pressed={editorViewMode === "diff"}
+                >
+                  对比
                 </button>
               </div>
             </div>

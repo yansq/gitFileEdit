@@ -76,7 +76,7 @@ function FileTreeRow(props: {
     <button
       type="button"
       className={cn(
-        "group grid min-h-[34px] w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
+        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
         props.selectedPath === props.node.path &&
         "font-semibold text-[#111827]"
       )}
@@ -84,42 +84,10 @@ function FileTreeRow(props: {
       style={{ paddingLeft: `${indent + 18}px` }}
       title={props.node.path}
     >
-      <FileTypeIcon fileName={props.node.name} />
       <span className="min-w-0 truncate">{props.node.name}</span>
       <span className="hidden text-xs font-normal text-[#7a8b91] group-hover:inline">
         {props.node.file ? formatSize(props.node.file.size) : ""}
       </span>
     </button>
   );
-}
-
-function FileTypeIcon(props: { fileName: string }): JSX.Element {
-  const name = props.fileName.toLocaleLowerCase();
-
-  if (name.endsWith(".md")) {
-    return <span className="text-center text-sm font-black text-[#20a455]">M↓</span>;
-  }
-  if (name === "dockerfile" || name.includes("compose") || name.endsWith(".yml") || name.endsWith(".yaml")) {
-    return <span className="text-center text-lg leading-none text-[#238bd7]">◆</span>;
-  }
-  if (name.endsWith(".html")) {
-    return <span className="rounded-md bg-[#f4dfcb] text-center text-sm font-bold text-[#d9792b]">#</span>;
-  }
-  if (name.endsWith(".json")) {
-    return <span className="text-center text-lg leading-none text-[#e47a22]">{"{}"}</span>;
-  }
-  if (name.endsWith(".cjs") || name.endsWith(".js")) {
-    return <span className="text-center text-lg leading-none text-[#df3b4a]">◎</span>;
-  }
-  if (name.endsWith(".ts") || name.endsWith(".tsx")) {
-    return <span className="text-center text-lg leading-none text-[#a83ac6]">ϟ</span>;
-  }
-  if (name.endsWith(".css") || name.endsWith(".scss")) {
-    return <span className="text-center text-lg leading-none text-[#20a9c8]">~</span>;
-  }
-  if (name.endsWith(".properties") || name.endsWith(".conf") || name.endsWith(".ini") || name.endsWith(".env")) {
-    return <span className="rounded-md bg-[#edf1f3] text-center text-sm font-bold text-[#65727a]">.</span>;
-  }
-
-  return <span className="text-center text-lg leading-none text-[#9aa3aa]">•</span>;
 }

@@ -86,7 +86,8 @@ export function MergeConfigEditor(props: {
             EditorView.decorations.of(validationDecorations(props.validationIssue))
           ),
           EditorState.readOnly.of(true),
-          EditorView.editable.of(false)
+          EditorView.editable.of(false),
+          EditorView.lineWrapping
         ]
       },
       b: {
