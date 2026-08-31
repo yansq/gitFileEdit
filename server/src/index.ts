@@ -15,6 +15,10 @@ import {
 import { ConfigFileValidationError } from "./fileValidation";
 import {
   commitAndPushFile,
+  applyPromptFragmentBatch,
+  createPromptFragmentBatchPreview,
+  createPromptFragmentFile,
+  deletePromptFragmentFile,
   discardRepoFileChanges,
   FileConflictError,
   getEnvironmentIdForFile,
@@ -26,8 +30,10 @@ import {
   readFileHistorySnapshot,
   repoExists,
   restoreFileToHistoryCommit,
+  renamePromptFragmentFile,
   syncRepo
 } from "./git";
+import { withRepoMutationLock } from "./repoMutationLock";
 import { RepoEventHub, RepoWatcher } from "./repoWatcher";
 import type { AppConfig } from "./types";
 
@@ -135,7 +141,7 @@ async function initializeRepoOnStartup(): Promise<void> {
   const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
   try {
     if (config.repo.cloneOnStart) {
-      await syncRepo(config, runtime);
+      await withRepoMutationLock(() => syncRepo(config, runtime));
       await markLastSyncedAt(new Date().toISOString());
     }
     await ensureWatcher();
@@ -292,7 +298,7 @@ app.post("/api/file/discard", async (request, response, next) => {
 
     const config = await loadAppConfig();
     assertCanMutateFile(request, config, filePath);
-    const detail = await discardRepoFileChanges(config, filePath);
+    const detail = await withRepoMutationLock(() => discardRepoFileChanges(config, filePath));
     await ensureWatcher();
     notifier.broadcast("repo-changed", {
       relativePath: detail.path,
@@ -349,7 +355,7 @@ app.put("/api/settings/environments", async (request, response, next) => {
 app.post("/api/repo/sync", async (_request, response, next) => {
   try {
     const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
-    await syncRepo(config, runtime);
+    await withRepoMutationLock(() => syncRepo(config, runtime));
     await markLastSyncedAt(new Date().toISOString());
     await ensureWatcher();
     lastRepoError = null;
@@ -383,14 +389,14 @@ app.post("/api/commit", async (request, response, next) => {
 
     const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
     assertCanMutateFile(request, config, filePath);
-    const result = await commitAndPushFile(config, runtime, {
+    const result = await withRepoMutationLock(() => commitAndPushFile(config, runtime, {
       path: filePath,
       content,
       message: detailMessage,
       baseHead,
       baseBlob,
       actor: request.user
-    });
+    }));
     await markLastSyncedAt(new Date().toISOString());
     await ensureWatcher();
     lastRepoError = null;
@@ -429,13 +435,13 @@ app.post("/api/file/restore", async (request, response, next) => {
 
     const [config, runtime] = await Promise.all([loadAppConfig(), loadRuntimeState()]);
     assertCanMutateFile(request, config, filePath);
-    const result = await restoreFileToHistoryCommit(config, runtime, {
+    const result = await withRepoMutationLock(() => restoreFileToHistoryCommit(config, runtime, {
       path: filePath,
       hash,
       baseHead,
       baseBlob,
       actor: request.user
-    });
+    }));
     await markLastSyncedAt(new Date().toISOString());
     await ensureWatcher();
     lastRepoError = null;
@@ -448,6 +454,138 @@ app.post("/api/file/restore", async (request, response, next) => {
     if (!(error instanceof FileConflictError)) {
       lastRepoError = toErrorMessage(error);
     }
+    next(error);
+  }
+});
+
+app.post("/api/prompt-fragments/preview", async (request, response, next) => {
+  try {
+    assertAdmin(request);
+    const sourcePath = String(request.body.sourcePath ?? "").trim();
+    const environmentIds = Array.isArray(request.body.environmentIds)
+      ? request.body.environmentIds.map((item: unknown) => String(item))
+      : [];
+    const pattern = String(request.body.pattern ?? "").trim();
+    if (!sourcePath || !pattern || !environmentIds.length) {
+      response.status(400).json({ error: "请选择来源片段、目标环境并输入路径模式" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const preview = await withRepoMutationLock(() =>
+      createPromptFragmentBatchPreview(config, { sourcePath, environmentIds, pattern })
+    );
+    response.json(preview);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/prompt-fragments/apply", async (request, response, next) => {
+  try {
+    assertAdmin(request);
+    const sourcePath = String(request.body.sourcePath ?? "").trim();
+    const environmentIds = Array.isArray(request.body.environmentIds)
+      ? request.body.environmentIds.map((item: unknown) => String(item))
+      : [];
+    const selectedPaths = Array.isArray(request.body.selectedPaths)
+      ? request.body.selectedPaths.map((item: unknown) => String(item))
+      : [];
+    const pattern = String(request.body.pattern ?? "").trim();
+    const baseHead = String(request.body.baseHead ?? "").trim();
+    const message = String(request.body.message ?? "").trim();
+    if (!sourcePath || !pattern || !baseHead || !environmentIds.length || !selectedPaths.length) {
+      response.status(400).json({ error: "批量替换确认信息不完整" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const result = await withRepoMutationLock(() => applyPromptFragmentBatch(config, {
+      sourcePath,
+      environmentIds,
+      selectedPaths,
+      pattern,
+      baseHead,
+      message,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    lastRepoError = null;
+    notifier.broadcast("repo-changed", { relativePath: null, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
+    lastRepoError = toErrorMessage(error);
+    next(error);
+  }
+});
+
+app.post("/api/prompt-fragments/files", async (request, response, next) => {
+  try {
+    assertAdmin(request);
+    const environmentId = String(request.body.environmentId ?? "").trim();
+    const relativePath = String(request.body.relativePath ?? "").trim();
+    const tagName = String(request.body.tagName ?? "").trim();
+    if (!environmentId || !relativePath || !tagName) {
+      response.status(400).json({ error: "片段库、文件路径和 XML 根标签不能为空" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const result = await withRepoMutationLock(() => createPromptFragmentFile(config, {
+      environmentId,
+      relativePath,
+      tagName,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/prompt-fragments/files/rename", async (request, response, next) => {
+  try {
+    assertAdmin(request);
+    const filePath = String(request.body.path ?? "").trim();
+    const relativePath = String(request.body.relativePath ?? "").trim();
+    if (!filePath || !relativePath) {
+      response.status(400).json({ error: "来源文件和新文件路径不能为空" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const result = await withRepoMutationLock(() => renamePromptFragmentFile(config, {
+      path: filePath,
+      relativePath,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/prompt-fragments/files", async (request, response, next) => {
+  try {
+    assertAdmin(request);
+    const filePath = String(request.body.path ?? "").trim();
+    if (!filePath) {
+      response.status(400).json({ error: "缺少片段文件路径" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const result = await withRepoMutationLock(() => deletePromptFragmentFile(config, {
+      path: filePath,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
     next(error);
   }
 });

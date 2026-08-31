@@ -8,6 +8,8 @@ export function FileTree(props: {
   nodes: FileTreeNode[];
   selectedPath: string;
   onSelect: (path: string) => void;
+  onRename?: (path: string) => void;
+  onDelete?: (path: string) => void;
   level?: number;
 }): JSX.Element {
   const level = props.level ?? 0;
@@ -20,6 +22,8 @@ export function FileTree(props: {
           node={node}
           selectedPath={props.selectedPath}
           onSelect={props.onSelect}
+          onRename={props.onRename}
+          onDelete={props.onDelete}
           level={level}
         />
       ))}
@@ -31,6 +35,8 @@ function FileTreeRow(props: {
   node: FileTreeNode;
   selectedPath: string;
   onSelect: (path: string) => void;
+  onRename?: (path: string) => void;
+  onDelete?: (path: string) => void;
   level: number;
 }): JSX.Element {
   const containsSelected = nodeContainsPath(props.node, props.selectedPath);
@@ -65,6 +71,8 @@ function FileTreeRow(props: {
             nodes={props.node.children}
             selectedPath={props.selectedPath}
             onSelect={props.onSelect}
+            onRename={props.onRename}
+            onDelete={props.onDelete}
             level={props.level + 1}
           />
         ) : null}
@@ -72,22 +80,62 @@ function FileTreeRow(props: {
     );
   }
 
+  const hasActions = Boolean(props.onRename || props.onDelete);
   return (
-    <button
-      type="button"
+    <div
       className={cn(
-        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
-        props.selectedPath === props.node.path &&
-        "font-semibold text-[#111827]"
+        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
+        props.selectedPath === props.node.path && "font-semibold text-[#111827]"
       )}
-      onClick={() => props.onSelect(props.node.path)}
       style={{ paddingLeft: `${indent + 18}px` }}
       title={props.node.path}
     >
-      <span className="min-w-0 truncate">{props.node.name}</span>
-      <span className="hidden text-xs font-normal text-[#7a8b91] group-hover:inline">
-        {props.node.file ? formatSize(props.node.file.size) : ""}
-      </span>
-    </button>
+      <button
+        className="min-w-0 truncate text-left"
+        onClick={() => props.onSelect(props.node.path)}
+        type="button"
+      >
+        {props.node.name}
+      </button>
+      <div className="hidden items-center gap-1 group-hover:flex">
+        <span className="text-xs font-normal text-[#7a8b91]">
+          {props.node.file ? formatSize(props.node.file.size) : ""}
+        </span>
+        {hasActions ? (
+          <>
+            {props.onRename ? (
+              <button
+                aria-label={`重命名 ${props.node.name}`}
+                className="rounded p-1 text-[#60767c] hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
+                onClick={() => props.onRename?.(props.node.path)}
+                title="重命名"
+                type="button"
+              >
+                <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+            ) : null}
+            {props.onDelete ? (
+              <button
+                aria-label={`删除 ${props.node.name}`}
+                className="rounded p-1 text-[#9f2f20] hover:bg-[#c94a35]/10"
+                onClick={() => props.onDelete?.(props.node.path)}
+                title="删除"
+                type="button"
+              >
+                <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                  <path d="M10 11v5M14 11v5" />
+                </svg>
+              </button>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </div>
   );
 }

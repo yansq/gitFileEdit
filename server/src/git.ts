@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   stat,
+  unlink,
   writeFile
 } from "node:fs/promises";
 import {
@@ -16,6 +17,11 @@ import {
   resolveRepoPath
 } from "./config";
 import { validateConfigFileContent } from "./fileValidation";
+import {
+  compileEnvironmentGlob,
+  parsePromptFragment,
+  replaceSinglePromptElement
+} from "./promptFragmentXml";
 import type {
   AppConfig,
   CommitSummary,
@@ -27,6 +33,7 @@ import type {
   EnvironmentReviewFile,
   RepoFileSummary,
   RepoStatus,
+  PromptFragmentBatchPreview,
   RuntimeState
 } from "./types";
 import type { AuthUser } from "./types";
@@ -90,6 +97,14 @@ function getEnvironmentRoot(config: AppConfig, repoPath: string, environmentId: 
 
 function isAllowedConfigFile(config: AppConfig, repoRelativePath: string): boolean {
   return config.repo.allowedExtensions.includes(path.extname(repoRelativePath).toLowerCase());
+}
+
+function getEnvironmentForFile(config: AppConfig, repoRelativePath: string) {
+  const normalizedPath = repoRelativePath.replace(/^\/+/, "");
+  return getEnvironmentOptions(config).find((environment) => {
+    const root = environment.root.replace(/^\/+|\/+$/g, "");
+    return normalizedPath === root || normalizedPath.startsWith(`${root}/`);
+  });
 }
 
 export function getEnvironmentIdForFile(config: AppConfig, filePath: string): string | null {
@@ -848,6 +863,15 @@ export async function commitAndPushFile(
   ].join("\n\n");
 
   const absolutePath = path.resolve(repoPath, repoRelativePath);
+  if (getEnvironmentForFile(config, repoRelativePath)?.kind === "fragment-library") {
+    try {
+      parsePromptFragment(input.content);
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error("提示词片段 XML 格式无效"), {
+        statusCode: 400
+      });
+    }
+  }
   validateConfigFileContent(repoRelativePath, input.content);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, input.content, "utf8");
@@ -1042,5 +1066,364 @@ export async function hasAnyRepoContent(repoPath: string): Promise<boolean> {
     return entries.length > 0;
   } catch {
     return false;
+  }
+}
+
+function normalizeFragmentRelativePath(relativePathValue: string): string {
+  const relativePath = relativePathValue.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!relativePath || relativePath.split("/").some((segment) => !segment || segment === "..")) {
+    throw new Error("请输入片段库内的有效文件路径");
+  }
+  return relativePath;
+}
+
+function getFragmentLibraryEnvironment(config: AppConfig, environmentId: string) {
+  const environment = getEnvironmentOptions(config).find((item) => item.id === environmentId);
+  if (!environment || environment.kind !== "fragment-library") {
+    throw new Error("所选环境不是提示词片段库");
+  }
+  return environment;
+}
+
+async function ensureFastForwardedRemote(config: AppConfig, repoPath: string): Promise<string> {
+  const remoteRef = `origin/${config.repo.branch}`;
+  const [currentHead, remoteHead] = await Promise.all([
+    readGitRef(repoPath, "HEAD"),
+    readGitRef(repoPath, remoteRef)
+  ]);
+  if (!remoteHead) throw new Error("远程分支没有可用版本");
+  if (currentHead !== remoteHead) {
+    await runGit(["merge", "--ff-only", remoteRef], { cwd: repoPath });
+  }
+  return remoteHead;
+}
+
+async function assertPathsClean(repoPath: string, paths: string[]): Promise<void> {
+  const status = await runGit(["status", "--porcelain", "--", ...paths], { cwd: repoPath });
+  if (status.trim()) {
+    throw Object.assign(new Error("片段文件存在未提交修改，请先处理后重试"), { statusCode: 409 });
+  }
+}
+
+async function pushCurrentBranch(config: AppConfig, repoPath: string): Promise<void> {
+  await runGit(
+    buildGitArgsWithManagedCredentials(config, [
+      "push",
+      config.repo.remoteUrl,
+      `HEAD:${config.repo.branch}`
+    ]),
+    { cwd: repoPath }
+  );
+  const head = await readGitRef(repoPath, "HEAD");
+  if (head) {
+    await runGit(["update-ref", getRemoteTrackingRef(config), head], { cwd: repoPath });
+  }
+}
+
+async function rollbackGeneratedCommit(
+  repoPath: string,
+  originalHead: string,
+  paths: string[],
+  committed: boolean
+): Promise<void> {
+  if (committed) {
+    // 保留其他文件可能已暂存的用户修改；只撤销本次生成的提交。
+    await runGit(["reset", "--soft", originalHead], { cwd: repoPath }).catch(() => "");
+  }
+  await runGit(["restore", "--staged", "--worktree", "--", ...paths], { cwd: repoPath }).catch(() => "");
+}
+
+export async function createPromptFragmentBatchPreview(
+  config: AppConfig,
+  input: { sourcePath: string; environmentIds: string[]; pattern: string }
+): Promise<PromptFragmentBatchPreview> {
+  const repoPath = resolveRepoPath(config);
+  await fetchRemoteBranch(config, repoPath);
+  const remoteRef = `origin/${config.repo.branch}`;
+  const baseHead = await readGitRef(repoPath, remoteRef);
+  if (!baseHead) throw new Error("远程分支没有可用版本");
+
+  const sourcePath = normalizeAllowedFilePath(config, repoPath, input.sourcePath);
+  const sourceEnvironment = getEnvironmentForFile(config, sourcePath);
+  if (!sourceEnvironment || sourceEnvironment.kind !== "fragment-library") {
+    throw new Error("来源文件不在提示词片段库中");
+  }
+  const [sourceRaw, sourceBlob] = await Promise.all([
+    readGitFile(repoPath, remoteRef, sourcePath),
+    readGitBlobId(repoPath, remoteRef, sourcePath)
+  ]);
+  if (!sourceBlob) throw new Error("来源片段尚未提交到远程仓库");
+  const fragment = parsePromptFragment(sourceRaw);
+  const matcher = compileEnvironmentGlob(input.pattern);
+
+  const requestedIds = Array.from(new Set(input.environmentIds.map((item) => item.trim()).filter(Boolean)));
+  if (!requestedIds.length) throw new Error("请至少选择一个目标环境");
+  const allEnvironments = getEnvironmentOptions(config);
+  const environments = requestedIds.map((environmentId) => {
+    const environment = allEnvironments.find((item) => item.id === environmentId);
+    if (!environment || environment.kind !== "config") throw new Error("批量替换目标只能是普通配置环境");
+    return environment;
+  });
+
+  const roots = environments.map((item) => item.root.replace(/^\/+|\/+$/g, ""));
+  const fileOutput = await runGit(["ls-tree", "-r", "--name-only", remoteRef, "--", ...roots], {
+    cwd: repoPath
+  });
+  const candidates = fileOutput
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => isAllowedConfigFile(config, item));
+
+  const items = await Promise.all(candidates.map(async (filePath) => {
+    const environment = environments.find((item) => isInVisibleRoots(filePath, [item.root]));
+    if (!environment) return null;
+    const root = environment.root.replace(/^\/+|\/+$/g, "");
+    const relativePath = filePath.slice(root.length).replace(/^\/+/, "");
+    if (!matcher.test(relativePath)) return null;
+
+    const beforeContent = await readGitFile(repoPath, remoteRef, filePath);
+    try {
+      const replacement = replaceSinglePromptElement(beforeContent, fragment.tagName, fragment.content);
+      if (replacement.status === "missing") {
+        return {
+          path: filePath,
+          environmentId: environment.id,
+          environmentLabel: environment.label,
+          relativePath,
+          status: "missing" as const,
+          message: `未找到 <${fragment.tagName}>`
+        };
+      }
+      if (replacement.status === "unchanged") {
+        return {
+          path: filePath,
+          environmentId: environment.id,
+          environmentLabel: environment.label,
+          relativePath,
+          status: "unchanged" as const,
+          message: "内容已经与来源片段一致",
+          beforeContent,
+          afterContent: replacement.content
+        };
+      }
+      return {
+        path: filePath,
+        environmentId: environment.id,
+        environmentLabel: environment.label,
+        relativePath,
+        status: "changed" as const,
+        message: "可以替换",
+        beforeContent,
+        afterContent: replacement.content
+      };
+    } catch (error) {
+      return {
+        path: filePath,
+        environmentId: environment.id,
+        environmentLabel: environment.label,
+        relativePath,
+        status: "error" as const,
+        message: error instanceof Error ? error.message : "XML 标签结构异常",
+        beforeContent
+      };
+    }
+  }));
+
+  const matchedItems = items.filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const count = (status: string) => matchedItems.filter((item) => item.status === status).length;
+  const errorCount = count("error");
+  return {
+    baseHead,
+    sourcePath,
+    sourceBlob,
+    tagName: fragment.tagName,
+    sourceContent: fragment.content,
+    pattern: input.pattern.trim(),
+    environmentIds: requestedIds,
+    matchedCount: matchedItems.length,
+    changedCount: count("changed"),
+    unchangedCount: count("unchanged"),
+    missingCount: count("missing"),
+    errorCount,
+    canApply: errorCount === 0 && count("changed") > 0,
+    items: matchedItems.sort((left, right) => left.path.localeCompare(right.path))
+  };
+}
+
+export async function applyPromptFragmentBatch(
+  config: AppConfig,
+  input: {
+    sourcePath: string;
+    environmentIds: string[];
+    pattern: string;
+    baseHead: string;
+    selectedPaths: string[];
+    message: string;
+    actor?: AuthUser;
+  }
+): Promise<{ head: string; paths: string[] }> {
+  const preview = await createPromptFragmentBatchPreview(config, input);
+  if (preview.baseHead !== input.baseHead.trim()) {
+    throw Object.assign(new Error("远程仓库已发生变化，请重新生成批量替换预览"), { statusCode: 409 });
+  }
+  if (preview.errorCount > 0) throw new Error("匹配文件中存在 XML 标签异常，不能提交");
+
+  const selectable = new Map(
+    preview.items.filter((item) => item.status === "changed").map((item) => [item.path, item])
+  );
+  const selectedPaths = Array.from(new Set(input.selectedPaths.map((item) => item.trim()))).sort();
+  if (!selectedPaths.length) throw new Error("请至少选择一个需要替换的文件");
+  if (selectedPaths.some((item) => !selectable.has(item))) {
+    throw new Error("选择的文件不属于当前批量替换预览");
+  }
+
+  const repoPath = resolveRepoPath(config);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, selectedPaths);
+  if (originalHead !== preview.baseHead) {
+    throw Object.assign(new Error("远程仓库已发生变化，请重新生成批量替换预览"), { statusCode: 409 });
+  }
+
+  for (const filePath of selectedPaths) {
+    validateConfigFileContent(filePath, selectable.get(filePath)?.afterContent ?? "");
+  }
+
+  let committed = false;
+  try {
+    for (const filePath of selectedPaths) {
+      const absolutePath = path.resolve(repoPath, filePath);
+      await writeFile(absolutePath, selectable.get(filePath)?.afterContent ?? "", "utf8");
+    }
+    await runGit(["add", "--", ...selectedPaths], { cwd: repoPath });
+    const targetLabels = getEnvironmentOptions(config)
+      .filter((item) => input.environmentIds.includes(item.id))
+      .map((item) => item.label)
+      .join("、");
+    const detailMessage = input.message.trim() || `提示词片段 <${preview.tagName}>`;
+    const subject = `${config.repo.commitMessagePrefix || ""}批量替换 ${detailMessage}`.trim();
+    const commitMessage = [
+      subject,
+      `来源片段：${preview.sourcePath}`,
+      `来源 Blob：${preview.sourceBlob}`,
+      `XML 标签：${preview.tagName}`,
+      `目标环境：${targetLabels}`,
+      `修改文件：${selectedPaths.length} 个`,
+      input.actor ? `提交用户：${input.actor.id}` : null
+    ].filter((item): item is string => Boolean(item)).join("\n\n");
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", commitMessage, "--", ...selectedPaths],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", paths: selectedPaths };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, selectedPaths, committed);
+    throw error;
+  }
+}
+
+export async function createPromptFragmentFile(
+  config: AppConfig,
+  input: { environmentId: string; relativePath: string; tagName: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const environment = getFragmentLibraryEnvironment(config, input.environmentId);
+  const repoPath = resolveRepoPath(config);
+  const requestedRelativePath = normalizeFragmentRelativePath(input.relativePath);
+  const relativePath = path.extname(requestedRelativePath) ? requestedRelativePath : `${requestedRelativePath}.xml`;
+  const filePath = normalizeRepoRelativePath(repoPath, `${environment.root}/${relativePath}`);
+  if (!isInVisibleRoots(filePath, [environment.root]) || !isAllowedConfigFile(config, filePath)) {
+    throw new Error("片段文件路径或扩展名不在允许范围内");
+  }
+  const tagName = input.tagName.trim();
+  if (!/^[A-Za-z_][\w:.-]*$/.test(tagName)) throw new Error("XML 根标签名无效");
+  const content = `<${tagName}>\n\n</${tagName}>\n`;
+  parsePromptFragment(content);
+
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [filePath]);
+  if (await readGitBlobId(repoPath, `origin/${config.repo.branch}`, filePath)) throw new Error("片段文件已经存在");
+  let committed = false;
+  try {
+    await mkdir(path.dirname(path.resolve(repoPath, filePath)), { recursive: true });
+    await writeFile(path.resolve(repoPath, filePath), content, "utf8");
+    await runGit(["add", "--", filePath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}新建提示词片段 ${relativePath}`.trim(), "--", filePath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: filePath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [filePath], committed);
+    await unlink(path.resolve(repoPath, filePath)).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function renamePromptFragmentFile(
+  config: AppConfig,
+  input: { path: string; relativePath: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const repoPath = resolveRepoPath(config);
+  const sourcePath = normalizeAllowedFilePath(config, repoPath, input.path);
+  const environment = getEnvironmentForFile(config, sourcePath);
+  if (!environment || environment.kind !== "fragment-library") throw new Error("只能重命名提示词片段文件");
+  const relativePath = normalizeFragmentRelativePath(input.relativePath);
+  const targetPath = normalizeRepoRelativePath(repoPath, `${environment.root}/${relativePath}`);
+  if (!isInVisibleRoots(targetPath, [environment.root]) || !isAllowedConfigFile(config, targetPath)) throw new Error("片段文件路径或扩展名不在允许范围内");
+  if (sourcePath === targetPath) throw new Error("新旧文件路径相同");
+
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [sourcePath, targetPath]);
+  const remoteRef = `origin/${config.repo.branch}`;
+  if (!(await readGitBlobId(repoPath, remoteRef, sourcePath))) throw new Error("来源片段不存在");
+  if (await readGitBlobId(repoPath, remoteRef, targetPath)) throw new Error("目标片段文件已经存在");
+  let committed = false;
+  try {
+    await mkdir(path.dirname(path.resolve(repoPath, targetPath)), { recursive: true });
+    await runGit(["mv", "--", sourcePath, targetPath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}重命名提示词片段 ${relativePath}`.trim(), "--", sourcePath, targetPath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: targetPath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [sourcePath, targetPath], committed);
+    throw error;
+  }
+}
+
+export async function deletePromptFragmentFile(
+  config: AppConfig,
+  input: { path: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const repoPath = resolveRepoPath(config);
+  const filePath = normalizeAllowedFilePath(config, repoPath, input.path);
+  const environment = getEnvironmentForFile(config, filePath);
+  if (!environment || environment.kind !== "fragment-library") throw new Error("只能删除提示词片段文件");
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [filePath]);
+  if (!(await readGitBlobId(repoPath, `origin/${config.repo.branch}`, filePath))) throw new Error("片段文件不存在");
+  let committed = false;
+  try {
+    await runGit(["rm", "--", filePath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}删除提示词片段 ${filePath.split("/").pop()}`.trim(), "--", filePath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: filePath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [filePath], committed);
+    throw error;
   }
 }

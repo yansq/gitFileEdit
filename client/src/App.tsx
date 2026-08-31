@@ -24,6 +24,8 @@ import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
 import type { ConfigEditorValidationIssue } from "./components/ConfigEditor";
 import { FileTree } from "./components/FileTree";
+import { PromptFragmentBatchDialog } from "./components/PromptFragmentBatchDialog";
+import { PromptFragmentFileDialog } from "./components/PromptFragmentFileDialog";
 import { ToastStack } from "./components/ToastStack";
 import {
   buildFileTree,
@@ -172,7 +174,8 @@ function createBlankEnvironment(index: number, fallback?: RepoEnvironmentOption)
     id: `env-${Date.now()}-${index + 1}`,
     label: "",
     root: fallback?.root ?? "",
-    requiresAdminToEdit: false
+    requiresAdminToEdit: false,
+    kind: "config"
   };
 }
 
@@ -377,6 +380,9 @@ export default function App(): JSX.Element {
   const [showEnvironmentSettings, setShowEnvironmentSettings] = useState(false);
   const [environmentDraft, setEnvironmentDraft] = useState<RepoEnvironmentOption[]>([]);
   const [savingEnvironmentSettings, setSavingEnvironmentSettings] = useState(false);
+  const [fragmentFileDialogMode, setFragmentFileDialogMode] = useState<"create" | "rename" | null>(null);
+  const [fragmentBatchOpen, setFragmentBatchOpen] = useState(false);
+  const [fragmentFileOperation, setFragmentFileOperation] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewSince, setReviewSince] = useState(() =>
     toDateInputValue(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000))
@@ -412,6 +418,8 @@ export default function App(): JSX.Element {
     setActivationCode("");
     setShowEnvironmentSettings(false);
     setEnvironmentDraft([]);
+    setFragmentFileDialogMode(null);
+    setFragmentBatchOpen(false);
   }
 
   function handleAuthRequired(errorValue: unknown): boolean {
@@ -1219,10 +1227,75 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function submitFragmentFileDialog(values: {
+    relativePath: string;
+    tagName: string;
+  }): Promise<void> {
+    const environment = bootstrap?.config.environments.find(
+      (item) => item.id === selectedEnvironment && item.kind === "fragment-library"
+    );
+    if (!environment || !fragmentFileDialogMode) return;
+
+    setFragmentFileOperation(true);
+    setError(null);
+    try {
+      const result = await requestJson<{ head: string; path: string }>(
+        fragmentFileDialogMode === "create"
+          ? "/api/prompt-fragments/files"
+          : "/api/prompt-fragments/files/rename",
+        {
+          method: "POST",
+          body: JSON.stringify(
+            fragmentFileDialogMode === "create"
+              ? {
+                environmentId: environment.id,
+                relativePath: values.relativePath,
+                tagName: values.tagName
+              }
+              : {
+                path: selectedPath,
+                relativePath: values.relativePath
+              }
+          )
+        }
+      );
+      setFragmentFileDialogMode(null);
+      await refreshBootstrap(result.path);
+      setMessage(fragmentFileDialogMode === "create" ? "提示词片段已创建并提交" : "提示词片段已重命名并提交");
+    } catch (operationError) {
+      if (!handleAuthRequired(operationError)) setError((operationError as Error).message);
+    } finally {
+      setFragmentFileOperation(false);
+    }
+  }
+
+  async function deleteFragment(pathValue: string): Promise<void> {
+    if (!window.confirm(`确认删除提示词片段 ${pathValue}？删除会立即提交并推送。`)) return;
+    setFragmentFileOperation(true);
+    setError(null);
+    try {
+      await requestJson<{ head: string; path: string }>("/api/prompt-fragments/files", {
+        method: "DELETE",
+        body: JSON.stringify({ path: pathValue })
+      });
+      await refreshBootstrap(undefined);
+      setMessage("提示词片段已删除并推送");
+    } catch (operationError) {
+      if (!handleAuthRequired(operationError)) setError((operationError as Error).message);
+    } finally {
+      setFragmentFileOperation(false);
+    }
+  }
+
   const files: RepoFileSummary[] = bootstrap?.files ?? [];
   const environmentOptions = bootstrap?.config.environments ?? [];
   const activeEnvironment =
     environmentOptions.find((item) => item.id === selectedEnvironment) ?? environmentOptions[0];
+  const isFragmentLibrary = activeEnvironment?.kind === "fragment-library";
+  const selectedFragmentRelativePath =
+    isFragmentLibrary && selectedPath && activeEnvironment
+      ? getPathWithinRoot(selectedPath, activeEnvironment.root) ?? ""
+      : "";
   const selectedFileEnvironment =
     environmentOptions.find(
       (item) => selectedPath && getPathWithinRoot(selectedPath, item.root) !== null
@@ -1430,6 +1503,27 @@ export default function App(): JSX.Element {
           onConfirm={() => void commitAndPush()}
         />
       ) : null}
+      {fragmentFileDialogMode ? (
+        <PromptFragmentFileDialog
+          mode={fragmentFileDialogMode}
+          initialRelativePath={fragmentFileDialogMode === "rename" ? selectedFragmentRelativePath : ""}
+          onClose={() => setFragmentFileDialogMode(null)}
+          onSubmit={submitFragmentFileDialog}
+        />
+      ) : null}
+      {fragmentBatchOpen && selectedPath ? (
+        <PromptFragmentBatchDialog
+          sourcePath={selectedPath}
+          environments={environmentOptions}
+          onClose={() => setFragmentBatchOpen(false)}
+          onError={(batchError) => setError(batchError)}
+          onApplied={async (paths) => {
+            setFragmentBatchOpen(false);
+            await refreshBootstrap(selectedPath);
+            setMessage(`已批量替换并提交 ${paths.length} 个文件`);
+          }}
+        />
+      ) : null}
       <header className="mb-6 flex flex-col items-start justify-between gap-6 xl:flex-row">
         <div>
           <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
@@ -1567,7 +1661,7 @@ export default function App(): JSX.Element {
             <div>
               <h2 className="m-0 text-lg">环境配置</h2>
               <div className="mt-1.5 text-sm text-[#728188]">
-                配置环境名称、展示目录和编辑权限。
+                配置环境名称、类型、展示目录和编辑权限。
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -1604,6 +1698,7 @@ export default function App(): JSX.Element {
                     <label className="inline-flex items-center gap-2 text-sm font-semibold text-[#40545b]">
                       <input
                         checked={environment.requiresAdminToEdit}
+                        disabled={environment.kind === "fragment-library"}
                         onChange={(event) =>
                           updateEnvironmentDraft(index, {
                             requiresAdminToEdit: event.target.checked
@@ -1623,19 +1718,35 @@ export default function App(): JSX.Element {
                     </button>
                   </div>
                 </div>
-                <div className="grid gap-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(320px,1.4fr)]">
+                <div className="grid gap-3 xl:grid-cols-[minmax(160px,0.7fr)_minmax(180px,0.7fr)_minmax(320px,1.4fr)]">
                   <label className={formRowClass}>
                     <span className={formLabelClass}>环境名称</span>
                     <input
                       className={inputClass}
                       onChange={(event) =>
                         updateEnvironmentDraft(index, {
-                          label: event.target.value,
-                          id: createEnvironmentId(event.target.value, index)
+                          label: event.target.value
                         })
                       }
                       value={environment.label}
                     />
+                  </label>
+                  <label className={formRowClass}>
+                    <span className={formLabelClass}>环境类型</span>
+                    <select
+                      className={inputClass}
+                      onChange={(event) => {
+                        const kind = event.target.value === "fragment-library" ? "fragment-library" : "config";
+                        updateEnvironmentDraft(index, {
+                          kind,
+                          requiresAdminToEdit: kind === "fragment-library" || environment.requiresAdminToEdit
+                        });
+                      }}
+                      value={environment.kind}
+                    >
+                      <option value="config">普通配置环境</option>
+                      <option value="fragment-library">提示词片段库</option>
+                    </select>
                   </label>
                   <label className={formRowClass}>
                     <span className={formLabelClass}>展示目录</span>
@@ -1780,6 +1891,28 @@ export default function App(): JSX.Element {
             ) : null}
           </div>
 
+          {isFragmentLibrary && authUser?.role === "admin" ? (
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button
+                className={secondaryButtonClass}
+                disabled={fragmentFileOperation}
+                onClick={() => setFragmentFileDialogMode("create")}
+                type="button"
+              >
+                新建片段
+              </button>
+              <button
+                className={primaryButtonClass}
+                disabled={!selectedPath || editorDirty || fragmentFileOperation}
+                onClick={() => setFragmentBatchOpen(true)}
+                title={editorDirty ? "请先提交当前片段，再执行批量替换" : undefined}
+                type="button"
+              >
+                批量替换
+              </button>
+            </div>
+          ) : null}
+
           <label className="mb-4 flex min-h-[42px] items-center gap-2 rounded-xl border border-[#dfe4e6] bg-white px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
             <svg
               className="h-[18px] w-[18px] shrink-0 text-[#8b9499]"
@@ -1812,6 +1945,19 @@ export default function App(): JSX.Element {
                 nodes={fileTree}
                 selectedPath={selectedPath}
                 onSelect={setSelectedPath}
+                onRename={
+                  isFragmentLibrary && authUser?.role === "admin" && !fragmentFileOperation
+                    ? (pathValue) => {
+                      setSelectedPath(pathValue);
+                      setFragmentFileDialogMode("rename");
+                    }
+                    : undefined
+                }
+                onDelete={
+                  isFragmentLibrary && authUser?.role === "admin" && !fragmentFileOperation
+                    ? (pathValue) => void deleteFragment(pathValue)
+                    : undefined
+                }
               />
             )}
           </div>

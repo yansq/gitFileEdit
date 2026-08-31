@@ -13,19 +13,22 @@ const DEFAULT_ENVIRONMENTS: RepoEnvironmentOption[] = [
     id: "dev",
     label: "开发环境",
     root: `${DEFAULT_CONFIG_ROOT}/dev`,
-    requiresAdminToEdit: false
+    requiresAdminToEdit: false,
+    kind: "config"
   },
   {
     id: "sit",
     label: "SIT环境",
     root: `${DEFAULT_CONFIG_ROOT}/sit`,
-    requiresAdminToEdit: false
+    requiresAdminToEdit: false,
+    kind: "config"
   },
   {
     id: "uat",
     label: "UAT环境",
     root: `${DEFAULT_CONFIG_ROOT}/uat`,
-    requiresAdminToEdit: true
+    requiresAdminToEdit: true,
+    kind: "config"
   }
 ];
 
@@ -111,11 +114,14 @@ function normalizeEnvironmentOptions(
         .replace(/^-+|-+$/g, "");
       const uniqueId = id && !seenIds.has(id) ? id : `env-${index + 1}`;
       seenIds.add(uniqueId);
+      const kind: RepoEnvironmentOption["kind"] =
+        item.kind === "fragment-library" ? "fragment-library" : "config";
       return {
         id: uniqueId,
         label: String(item.label || fallback.label || uniqueId).trim(),
         root: normalizeRoot(String(item.root || fallback.root || "")),
-        requiresAdminToEdit: Boolean(item.requiresAdminToEdit)
+        requiresAdminToEdit: kind === "fragment-library" || Boolean(item.requiresAdminToEdit),
+        kind
       };
     })
     .filter((item) => item.label && item.root);
