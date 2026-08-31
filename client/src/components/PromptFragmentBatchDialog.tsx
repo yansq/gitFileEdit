@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { PromptFragmentBatchPreview, RepoEnvironmentOption } from "../types";
 import {
   cn,
@@ -45,12 +45,25 @@ export function PromptFragmentBatchDialog(props: {
   const [preview, setPreview] = useState<PromptFragmentBatchPreview | null>(null);
   const [activeFilter, setActiveFilter] = useState<PreviewFilter>("changed");
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [expandedPreviewPath, setExpandedPreviewPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+    };
+  }, []);
 
   function toggleEnvironment(environmentId: string): void {
     setPreview(null);
     setSelectedPaths([]);
+    setExpandedPreviewPath(null);
     setEnvironmentIds((current) =>
       current.includes(environmentId)
         ? current.filter((item) => item !== environmentId)
@@ -67,6 +80,7 @@ export function PromptFragmentBatchDialog(props: {
       );
       setPreview(nextPreview);
       setActiveFilter("changed");
+      setExpandedPreviewPath(null);
       setSelectedPaths(
         nextPreview.items.filter((item) => item.status === "changed").map((item) => item.path)
       );
@@ -108,8 +122,9 @@ export function PromptFragmentBatchDialog(props: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-auto bg-[#10262b]/45 px-4 py-8">
-      <div className="mx-auto grid w-full max-w-6xl gap-5 rounded-[28px] bg-white p-5 shadow-[0_28px_90px_rgba(16,38,43,0.3)]">
+    <div className="fixed inset-0 z-50 overflow-hidden overscroll-contain bg-[#10262b]/45 px-4 py-4">
+      <div className="mx-auto max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-[0_28px_90px_rgba(16,38,43,0.3)]">
+        <div className="grid max-h-[calc(100vh-2rem)] gap-4 overflow-y-auto overscroll-contain p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="m-0 text-xl">批量替换提示词片段</h2>
@@ -120,7 +135,7 @@ export function PromptFragmentBatchDialog(props: {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <fieldset className="rounded-[20px] border border-[#183039]/10 p-4">
+          <fieldset className="rounded-[20px] border border-[#183039]/10 p-3">
             <legend className="px-2 text-sm font-semibold text-[#223841]">目标环境</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {targets.map((environment) => (
@@ -145,6 +160,7 @@ export function PromptFragmentBatchDialog(props: {
                   setPattern(event.target.value);
                   setPreview(null);
                   setSelectedPaths([]);
+                  setExpandedPreviewPath(null);
                 }}
                 placeholder="/tob-uat/*_prompt_cn"
               />
@@ -152,23 +168,22 @@ export function PromptFragmentBatchDialog(props: {
             <div className="text-xs leading-relaxed text-[#71838a]">
               相对于每个目标环境根目录；* 不跨目录，** 可跨任意层级，禁止使用 ..。
             </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                className={primaryButtonClass}
+                disabled={loading || !environmentIds.length || !pattern.trim()}
+                onClick={() => void loadPreview()}
+                type="button"
+              >
+                {loading ? "正在扫描..." : "生成替换预览"}
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            className={primaryButtonClass}
-            disabled={loading || !environmentIds.length || !pattern.trim()}
-            onClick={() => void loadPreview()}
-            type="button"
-          >
-            {loading ? "正在扫描..." : "生成替换预览"}
-          </button>
         </div>
 
         {preview ? (
           <>
-            <div className="grid gap-2 sm:grid-cols-5">
+            <div className="flex flex-wrap gap-1 rounded-2xl bg-[#eef4f2] p-1.5">
               {[
                 ["all", "路径匹配", preview.matchedCount],
                 ["changed", "可替换", preview.changedCount],
@@ -179,17 +194,17 @@ export function PromptFragmentBatchDialog(props: {
                 <button
                   aria-pressed={activeFilter === filter}
                   className={cn(
-                    "rounded-2xl px-3 py-3 text-center transition",
+                    "inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition",
                     activeFilter === filter
-                      ? "bg-[#0e6b72] text-white shadow-[0_10px_24px_rgba(18,118,112,0.2)]"
-                      : "bg-[#f1f6f4] text-[#183039] hover:bg-[#e2efeb]"
+                      ? "bg-[#0e6b72] text-white shadow-sm"
+                      : "text-[#53676e] hover:bg-white/80 hover:text-[#183039]"
                   )}
                   key={String(filter)}
                   onClick={() => setActiveFilter(filter as PreviewFilter)}
                   type="button"
                 >
-                  <div className={cn("text-xl font-bold", activeFilter === filter ? "text-white" : "text-[#183039]")}>{value}</div>
-                  <div className={cn("mt-1 text-xs", activeFilter === filter ? "text-white/80" : "text-[#6c7d83]")}>{label}</div>
+                  <span className={cn("font-bold", activeFilter === filter ? "text-white" : "text-[#183039]")}>{value}</span>
+                  <span className={activeFilter === filter ? "text-white/85" : "text-[#64777e]"}>{label}</span>
                 </button>
               ))}
             </div>
@@ -200,7 +215,7 @@ export function PromptFragmentBatchDialog(props: {
               </div>
             ) : null}
 
-            <div className="grid max-h-[48vh] gap-3 overflow-auto pr-1">
+            <div className="grid max-h-[34vh] gap-2 overflow-auto pr-1">
               {filteredItems.length === 0 ? (
                 <div className={emptyBlockClass}>
                   {activeFilter === "all" ? "当前路径条件没有匹配文件" : "当前筛选条件下没有文件"}
@@ -208,7 +223,12 @@ export function PromptFragmentBatchDialog(props: {
               ) : filteredItems.map((item) => {
                 const selectable = item.status === "changed";
                 return (
-                  <details className="rounded-[20px] border border-[#183039]/10 bg-[#fafcfb] p-3" key={item.path} open={item.status === "error"}>
+                  <details
+                    className="rounded-[20px] border border-[#183039]/10 bg-[#fafcfb] p-2.5"
+                    key={item.path}
+                    onToggle={(event) => setExpandedPreviewPath(event.currentTarget.open ? item.path : null)}
+                    open={expandedPreviewPath === item.path}
+                  >
                     <summary className="cursor-pointer list-none">
                       <div className="flex flex-wrap items-center gap-2">
                         {selectable ? (
@@ -230,6 +250,9 @@ export function PromptFragmentBatchDialog(props: {
                           item.status === "missing" && "bg-[#d8a21b]/15 text-[#785918]",
                           item.status === "unchanged" && "bg-[#183039]/10 text-[#40545b]"
                         )}>{item.message}</span>
+                        <span className="rounded-full bg-[#7654ca]/10 px-2.5 py-1 text-xs text-[#6245aa]">
+                          {item.environmentLabel}
+                        </span>
                         <span className="min-w-0 break-all text-sm font-semibold text-[#183039]">{item.path}</span>
                       </div>
                     </summary>
@@ -240,11 +263,11 @@ export function PromptFragmentBatchDialog(props: {
                           after={item.afterContent}
                           emptyText="内容没有变化"
                           display="unified"
-                          className="mt-3 max-h-[360px] overflow-auto"
+                          className="mt-2 max-h-[260px] overflow-auto"
                         />
                       </Suspense>
                     ) : item.beforeContent !== undefined ? (
-                      <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
+                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
                     ) : null}
                   </details>
                 );
@@ -268,6 +291,7 @@ export function PromptFragmentBatchDialog(props: {
             </div>
           </>
         ) : null}
+        </div>
       </div>
     </div>
   );

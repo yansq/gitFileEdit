@@ -25,6 +25,15 @@ test("整体替换元素并保留目标前后文本", () => {
   assert.equal(result.content, `before\n${replacement}\nafter`);
 });
 
+test("替换时继承目标 XML 标签的行缩进", () => {
+  const result = replaceSinglePromptElement(
+    `system:\n  <role>\n    old role\n  </role>\nend`,
+    "role",
+    `<role>\n  new role\n</role>`
+  );
+  assert.equal(result.content, `system:\n  <role>\n    new role\n  </role>\nend`);
+});
+
 test("同名标签出现多次或嵌套时阻止替换", () => {
   assert.throws(
     () => replaceSinglePromptElement(`<role>a</role><role>b</role>`, "role", `<role>x</role>`),

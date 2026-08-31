@@ -161,6 +161,17 @@ export function findPromptElementRanges(content: string, tagName: string): Promp
   return ranges;
 }
 
+function getLineIndentation(content: string, offset: number): string {
+  const lineStart = content.lastIndexOf("\n", offset - 1) + 1;
+  const prefix = content.slice(lineStart, offset);
+  return /^[\t ]*$/.test(prefix) ? prefix : "";
+}
+
+function indentReplacement(replacement: string, indentation: string): string {
+  if (!indentation) return replacement;
+  return replacement.replace(/(\r?\n)(?=[^\r\n]*\S)/g, `$1${indentation}`);
+}
+
 export function replaceSinglePromptElement(
   content: string,
   tagName: string,
@@ -171,7 +182,8 @@ export function replaceSinglePromptElement(
   if (ranges.length !== 1) throw new Error(`标签 <${tagName}> 出现 ${ranges.length} 次`);
 
   const range = ranges[0];
-  const nextContent = `${content.slice(0, range.start)}${replacement}${content.slice(range.end)}`;
+  const indentedReplacement = indentReplacement(replacement, getLineIndentation(content, range.start));
+  const nextContent = `${content.slice(0, range.start)}${indentedReplacement}${content.slice(range.end)}`;
   return {
     status: nextContent === content ? "unchanged" : "changed",
     content: nextContent

@@ -468,6 +468,10 @@ export default function App(): JSX.Element {
           ? current
           : derivedEnvironment
       );
+      if (nextPath !== selectedPath) {
+        setSelectedHistoryHash("");
+        setSelectedHistoryDetail(null);
+      }
       setSelectedPath(nextPath);
       if (!settingsSeeded || !preserveForm) {
         setGitForm({
@@ -1816,6 +1820,8 @@ export default function App(): JSX.Element {
                   setSelectedReviewHash("");
                   setReviewDiff(null);
                   setSelectedReviewPath("");
+                  setSelectedHistoryHash("");
+                  setSelectedHistoryDetail(null);
                   if (reviewOpen) {
                     void loadReviewChanges(nextEnvironmentId);
                   }
