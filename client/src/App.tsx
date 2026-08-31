@@ -1492,7 +1492,12 @@ export default function App(): JSX.Element {
   }
 
   return (
-    <div className="p-4 sm:p-7">
+    <div
+      className={cn(
+        "min-h-screen p-4 sm:p-7",
+        isFragmentLibrary && "bg-[radial-gradient(circle_at_top_left,rgba(117,78,210,0.13),transparent_34%),linear-gradient(135deg,#fbfaff_0%,#f5f9fb_58%,#f1f8f5_100%)]"
+      )}
+    >
       <ToastStack message={message} liveNotice={liveNotice} error={error} />
       {confirmingCommit && !isProtectedFileReadOnly ? (
         <CommitConfirmDialog
@@ -1526,14 +1531,19 @@ export default function App(): JSX.Element {
       ) : null}
       <header className="mb-6 flex flex-col items-start justify-between gap-6 xl:flex-row">
         <div>
-          <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
-            Git File Console
+          <p className={cn(
+            "mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]",
+            isFragmentLibrary && "text-[#7351c7]"
+          )}>
+            {isFragmentLibrary ? "Prompt Fragment Library" : "Git File Console"}
           </p>
           <h1 className="m-0 text-[clamp(32px,5vw,48px)] leading-[1.05]">
-            配置文件在线展示与提交
+            {isFragmentLibrary ? "提示词片段库" : "配置文件在线展示与提交"}
           </h1>
           <p className="mt-3.5 max-w-[760px] leading-relaxed text-[#43555d]">
-            按环境切换查看配置文件，支持实时刷新、在线修改、提交并推送。
+            {isFragmentLibrary
+              ? "集中管理可复用的 XML 提示词片段；提交片段后，可按环境和路径条件批量替换。"
+              : "按环境切换查看配置文件，支持实时刷新、在线修改、提交并推送。"}
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(260px,1fr)_auto]">
@@ -1780,9 +1790,13 @@ export default function App(): JSX.Element {
         className="grid gap-[22px] min-[961px]:grid-cols-[var(--file-list-grid)]"
         style={workspaceLayoutStyle}
       >
-        <aside className={cn(panelClass, "relative min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto")}>
+        <aside className={cn(
+          panelClass,
+          "relative min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto",
+          isFragmentLibrary && "border border-[#7654ca]/20 bg-[#fcfbff] shadow-[0_20px_54px_rgba(90,62,158,0.1)]"
+        )}>
           <div className={panelTitleRowClass}>
-            <h2 className="m-0 text-lg">文件列表</h2>
+            <h2 className="m-0 text-lg">{isFragmentLibrary ? "片段文件" : "文件列表"}</h2>
             <button className={secondaryButtonClass} onClick={() => void syncRepository()} disabled={syncing}>
               {syncing ? "同步中..." : "同步仓库"}
             </button>
