@@ -1,3 +1,12 @@
+import xmlFormat from "xml-formatter";
+
+export function formatXml(content: string): string {
+  return xmlFormat(content, {
+    indentation: "  ",
+    lineSeparator: "\n"
+  });
+}
+
 export function formatTime(isoTime: string | null): string {
   if (!isoTime) {
     return "未同步";

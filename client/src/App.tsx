@@ -32,7 +32,7 @@ import {
   getPathWithinRoot,
   replaceEnvironmentRoot
 } from "./lib/filePaths";
-import { formatTime, getCommitSubject } from "./lib/format";
+import { formatTime, formatXml, getCommitSubject } from "./lib/format";
 import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
 import {
   cn,
@@ -1469,6 +1469,22 @@ export default function App(): JSX.Element {
     setMessage("YAML 格式校验通过");
   }
 
+  function formatEditorAsXml(): void {
+    if (!selectedPath) return;
+
+    try {
+      const formatted = formatXml(getLatestEditorContent());
+      setEditorContent(formatted);
+      setEditorDirty(true);
+      setFileValidationError(null);
+      setError(null);
+      setMessage("XML 格式化完成");
+    } catch (formatError) {
+      setMessage(null);
+      setError(`XML 格式错误：${(formatError as Error).message}`);
+    }
+  }
+
   if (!authChecked || loading) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
   }
@@ -2339,10 +2355,10 @@ export default function App(): JSX.Element {
                   <button
                     type="button"
                     className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={validateEditorAsYaml}
+                    onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
                     disabled={!selectedPath}
                   >
-                    校验 YAML
+                    {isFragmentLibrary ? "XML格式化" : "校验 YAML"}
                   </button>
                 </div>
               ) : (
@@ -2365,10 +2381,10 @@ export default function App(): JSX.Element {
                   <button
                     type="button"
                     className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={validateEditorAsYaml}
+                    onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
                     disabled={!selectedPath}
                   >
-                    校验 YAML
+                    {isFragmentLibrary ? "XML格式化" : "校验 YAML"}
                   </button>
                   <LazyConfigEditor
                     value={editorContent}
