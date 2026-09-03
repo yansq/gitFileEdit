@@ -226,7 +226,9 @@ export function PromptFragmentBatchDialog(props: {
                   <details
                     className="rounded-[20px] border border-[#183039]/10 bg-[#fafcfb] p-2.5"
                     key={item.path}
-                    onToggle={(event) => setExpandedPreviewPath(event.currentTarget.open ? item.path : null)}
+                    onToggle={(event) => setExpandedPreviewPath((current) =>
+                      event.currentTarget.open ? item.path : current === item.path ? null : current
+                    )}
                     open={expandedPreviewPath === item.path}
                   >
                     <summary className="cursor-pointer list-none">
@@ -263,11 +265,11 @@ export function PromptFragmentBatchDialog(props: {
                           after={item.afterContent}
                           emptyText="内容没有变化"
                           display="unified"
-                          className="mt-2 max-h-[260px] overflow-auto"
+                          className="mt-2"
                         />
                       </Suspense>
                     ) : item.beforeContent !== undefined ? (
-                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
+                      <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
                     ) : null}
                   </details>
                 );
