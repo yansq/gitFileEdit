@@ -226,9 +226,12 @@ export function PromptFragmentBatchDialog(props: {
                   <details
                     className="rounded-[20px] border border-[#183039]/10 bg-[#fafcfb] p-2.5"
                     key={item.path}
-                    onToggle={(event) => setExpandedPreviewPath((current) =>
-                      event.currentTarget.open ? item.path : current === item.path ? null : current
-                    )}
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
+                      setExpandedPreviewPath((current) =>
+                        isOpen ? item.path : current === item.path ? null : current
+                      );
+                    }}
                     open={expandedPreviewPath === item.path}
                   >
                     <summary className="cursor-pointer list-none">
