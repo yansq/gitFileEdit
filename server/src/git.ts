@@ -1135,7 +1135,12 @@ async function rollbackGeneratedCommit(
 
 export async function createPromptFragmentBatchPreview(
   config: AppConfig,
-  input: { sourcePath: string; environmentIds: string[]; pattern: string }
+  input: {
+    sourcePath: string;
+    environmentIds: string[];
+    pattern: string;
+    actor?: AuthUser;
+  }
 ): Promise<PromptFragmentBatchPreview> {
   const repoPath = resolveRepoPath(config);
   await fetchRemoteBranch(config, repoPath);
@@ -1162,6 +1167,11 @@ export async function createPromptFragmentBatchPreview(
   const environments = requestedIds.map((environmentId) => {
     const environment = allEnvironments.find((item) => item.id === environmentId);
     if (!environment || environment.kind !== "config") throw new Error("批量替换目标只能是普通配置环境");
+    if (input.actor?.role !== "admin" && environment.requiresAdminToEdit) {
+      throw Object.assign(new Error("普通用户只能选择不需要管理员权限的目标环境"), {
+        statusCode: 403
+      });
+    }
     return environment;
   });
 

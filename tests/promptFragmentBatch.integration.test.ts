@@ -8,6 +8,7 @@ import {
   applyPromptFragmentBatch,
   createPromptFragmentBatchPreview
 } from "../server/src/git";
+import { getEnvironmentOptions } from "../server/src/config";
 import type { AppConfig } from "../server/src/types";
 
 function git(cwd: string, ...args: string[]): string {
@@ -30,6 +31,7 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
 
     await mkdir(path.join(repoPath, "templates"), { recursive: true });
     await mkdir(path.join(repoPath, "configs/dev/tob-uat"), { recursive: true });
+    await mkdir(path.join(repoPath, "configs/uat/tob-uat"), { recursive: true });
     await writeFile(
       path.join(repoPath, "templates/financial-role.xml"),
       `<role desc="金融顾问">\nnew role\n</role>\n`,
@@ -53,6 +55,11 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
     await writeFile(
       path.join(repoPath, "configs/dev/tob-uat/duplicate_prompt_cn"),
       `<role>one</role>\n<role>two</role>\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(repoPath, "configs/uat/tob-uat/customer_prompt_cn"),
+      `<role>protected role</role>\n`,
       "utf8"
     );
     git(repoPath, "add", ".");
@@ -83,10 +90,39 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
             root: "configs/dev",
             requiresAdminToEdit: false,
             kind: "config"
+          },
+          {
+            id: "uat",
+            label: "UAT环境",
+            root: "configs/uat",
+            requiresAdminToEdit: true,
+            kind: "config"
           }
         ]
       }
     };
+
+    assert.equal(
+      getEnvironmentOptions(config).find((item) => item.id === "templates")?.requiresAdminToEdit,
+      false
+    );
+    await assert.rejects(
+      createPromptFragmentBatchPreview(config, {
+        sourcePath: "templates/financial-role.xml",
+        environmentIds: ["uat"],
+        pattern: "/tob-uat/customer_prompt_cn",
+        actor: { id: "user", role: "user" }
+      }),
+      (error: Error & { statusCode?: number }) =>
+        error.statusCode === 403 && /不需要管理员权限/.test(error.message)
+    );
+    const adminPreview = await createPromptFragmentBatchPreview(config, {
+      sourcePath: "templates/financial-role.xml",
+      environmentIds: ["uat"],
+      pattern: "/tob-uat/customer_prompt_cn",
+      actor: { id: "admin", role: "admin" }
+    });
+    assert.equal(adminPreview.changedCount, 1);
 
     const blockedPreview = await createPromptFragmentBatchPreview(config, {
       sourcePath: "templates/financial-role.xml",
@@ -114,7 +150,7 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
       baseHead: preview.baseHead,
       selectedPaths: [selectedPath],
       message: "更新金融顾问角色",
-      actor: { id: "admin", role: "admin" }
+      actor: { id: "user", role: "user" }
     });
 
     assert.deepEqual(result.paths, ["configs/dev/tob-uat/customer_prompt_cn"]);

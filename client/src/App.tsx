@@ -1539,7 +1539,9 @@ export default function App(): JSX.Element {
       {fragmentBatchOpen && selectedPath ? (
         <PromptFragmentBatchDialog
           sourcePath={selectedPath}
-          environments={environmentOptions}
+          environments={environmentOptions.filter(
+            (item) => authUser?.role === "admin" || !item.requiresAdminToEdit
+          )}
           onClose={() => setFragmentBatchOpen(false)}
           onError={(batchError) => setError(batchError)}
           onApplied={async (paths) => {
@@ -1769,7 +1771,7 @@ export default function App(): JSX.Element {
                         const kind = event.target.value === "fragment-library" ? "fragment-library" : "config";
                         updateEnvironmentDraft(index, {
                           kind,
-                          requiresAdminToEdit: kind === "fragment-library" || environment.requiresAdminToEdit
+                          requiresAdminToEdit: kind === "fragment-library" ? false : environment.requiresAdminToEdit
                         });
                       }}
                       value={environment.kind}
@@ -1927,7 +1929,7 @@ export default function App(): JSX.Element {
             ) : null}
           </div>
 
-          {isFragmentLibrary && authUser?.role === "admin" ? (
+          {isFragmentLibrary ? (
             <div className="mb-3 grid grid-cols-2 gap-2">
               <button
                 className={secondaryButtonClass}
@@ -1982,7 +1984,7 @@ export default function App(): JSX.Element {
                 selectedPath={selectedPath}
                 onSelect={setSelectedPath}
                 onRename={
-                  isFragmentLibrary && authUser?.role === "admin" && !fragmentFileOperation
+                  isFragmentLibrary && !fragmentFileOperation
                     ? (pathValue) => {
                       setSelectedPath(pathValue);
                       setFragmentFileDialogMode("rename");
@@ -1990,7 +1992,7 @@ export default function App(): JSX.Element {
                     : undefined
                 }
                 onDelete={
-                  isFragmentLibrary && authUser?.role === "admin" && !fragmentFileOperation
+                  isFragmentLibrary && !fragmentFileOperation
                     ? (pathValue) => void deleteFragment(pathValue)
                     : undefined
                 }

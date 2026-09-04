@@ -120,7 +120,7 @@ function normalizeEnvironmentOptions(
         id: uniqueId,
         label: String(item.label || fallback.label || uniqueId).trim(),
         root: normalizeRoot(String(item.root || fallback.root || "")),
-        requiresAdminToEdit: kind === "fragment-library" || Boolean(item.requiresAdminToEdit),
+        requiresAdminToEdit: kind === "fragment-library" ? false : Boolean(item.requiresAdminToEdit),
         kind
       };
     })

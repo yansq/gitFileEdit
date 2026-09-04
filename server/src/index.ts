@@ -460,7 +460,6 @@ app.post("/api/file/restore", async (request, response, next) => {
 
 app.post("/api/prompt-fragments/preview", async (request, response, next) => {
   try {
-    assertAdmin(request);
     const sourcePath = String(request.body.sourcePath ?? "").trim();
     const environmentIds = Array.isArray(request.body.environmentIds)
       ? request.body.environmentIds.map((item: unknown) => String(item))
@@ -472,7 +471,12 @@ app.post("/api/prompt-fragments/preview", async (request, response, next) => {
     }
     const config = await loadAppConfig();
     const preview = await withRepoMutationLock(() =>
-      createPromptFragmentBatchPreview(config, { sourcePath, environmentIds, pattern })
+      createPromptFragmentBatchPreview(config, {
+        sourcePath,
+        environmentIds,
+        pattern,
+        actor: request.user
+      })
     );
     response.json(preview);
   } catch (error) {
@@ -482,7 +486,6 @@ app.post("/api/prompt-fragments/preview", async (request, response, next) => {
 
 app.post("/api/prompt-fragments/apply", async (request, response, next) => {
   try {
-    assertAdmin(request);
     const sourcePath = String(request.body.sourcePath ?? "").trim();
     const environmentIds = Array.isArray(request.body.environmentIds)
       ? request.body.environmentIds.map((item: unknown) => String(item))
@@ -520,7 +523,6 @@ app.post("/api/prompt-fragments/apply", async (request, response, next) => {
 
 app.post("/api/prompt-fragments/files", async (request, response, next) => {
   try {
-    assertAdmin(request);
     const environmentId = String(request.body.environmentId ?? "").trim();
     const relativePath = String(request.body.relativePath ?? "").trim();
     const tagName = String(request.body.tagName ?? "").trim();
@@ -546,7 +548,6 @@ app.post("/api/prompt-fragments/files", async (request, response, next) => {
 
 app.post("/api/prompt-fragments/files/rename", async (request, response, next) => {
   try {
-    assertAdmin(request);
     const filePath = String(request.body.path ?? "").trim();
     const relativePath = String(request.body.relativePath ?? "").trim();
     if (!filePath || !relativePath) {
@@ -570,7 +571,6 @@ app.post("/api/prompt-fragments/files/rename", async (request, response, next) =
 
 app.delete("/api/prompt-fragments/files", async (request, response, next) => {
   try {
-    assertAdmin(request);
     const filePath = String(request.body.path ?? "").trim();
     if (!filePath) {
       response.status(400).json({ error: "缺少片段文件路径" });
