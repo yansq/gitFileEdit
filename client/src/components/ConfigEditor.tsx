@@ -1,6 +1,7 @@
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
 import {
+  Decoration,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -11,14 +12,6 @@ import {
   type ViewUpdate
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
-
-function clampRatio(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  return Math.min(Math.max(value, 0), 1);
-}
 
 const configEditorTheme = EditorView.theme(
   {
@@ -35,12 +28,14 @@ const configEditorTheme = EditorView.theme(
         '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
       fontSize: "13px",
       lineHeight: "1.65",
-      overflow: "auto"
+      overflow: "auto",
+      overscrollBehavior: "none",
+      scrollPaddingBottom: "64px"
     },
     ".cm-content": {
       caretColor: "transparent",
       minHeight: "100%",
-      padding: "16px 16px 16px 12px"
+      padding: "0 16px 64px 12px"
     },
     ".cm-cursorLayer .cm-cursor": {
       borderLeft: "2px solid #c94a35"
@@ -60,74 +55,65 @@ const configEditorTheme = EditorView.theme(
       minWidth: "22px",
       padding: "0 4px 0 2px"
     },
-    ".cm-activeLine": {
-      backgroundColor: "rgba(29, 140, 104, 0.1)"
-    },
-    ".cm-activeLineGutter": {
-      backgroundColor: "rgba(29, 140, 104, 0.08)",
-      color: "#315159"
-    },
     ".cm-placeholder": {
       color: "#8b9aa1"
+    },
+    ".cm-validationIssue": {
+      backgroundColor: "rgba(201, 74, 53, 0.12)",
+      textDecoration: "underline wavy #c94a35",
+      textDecorationThickness: "1.5px",
+      textUnderlineOffset: "3px"
     }
   },
   { dark: false }
 );
 
+export interface ConfigEditorValidationIssue {
+  from: number;
+  to: number;
+  message: string;
+}
+
+function validationDecorations(issue: ConfigEditorValidationIssue | null) {
+  if (!issue || issue.to <= issue.from) {
+    return Decoration.none;
+  }
+
+  return Decoration.set([
+    Decoration.mark({
+      class: "cm-validationIssue",
+      attributes: {
+        title: issue.message
+      }
+    }).range(issue.from, issue.to)
+  ]);
+}
+
 export function ConfigEditor(props: {
   value: string;
   disabled: boolean;
   placeholderText: string;
+  validationIssue: ConfigEditorValidationIssue | null;
   onChange: (view: EditorView) => void;
   onViewReady: (view: EditorView | null) => void;
-  onCursorLineChange: (lineNumber: number, viewportTop: number, lineProgress: number) => void;
-  onViewportLineChange: (lineNumber: number, viewportTop: number, lineProgress: number) => void;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const valueRef = useRef(props.value);
+  const internalValueSnapshotsRef = useRef(new Set<string>());
   const applyingExternalValueRef = useRef(false);
   const disabledCompartmentRef = useRef(new Compartment());
+  const validationCompartmentRef = useRef(new Compartment());
   const onChangeRef = useRef(props.onChange);
-  const onCursorLineChangeRef = useRef(props.onCursorLineChange);
-  const onViewportLineChangeRef = useRef(props.onViewportLineChange);
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
-    onCursorLineChangeRef.current = props.onCursorLineChange;
-    onViewportLineChangeRef.current = props.onViewportLineChange;
-  }, [props.onChange, props.onCursorLineChange, props.onViewportLineChange]);
+  }, [props.onChange]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) {
       return;
-    }
-
-    function reportViewportLine(view: EditorView): void {
-      const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
-      const line = view.state.doc.lineAt(block.from);
-      const blockHeight = Math.max(1, block.height);
-      const lineProgress = clampRatio((view.scrollDOM.scrollTop - block.top) / blockHeight);
-      onViewportLineChangeRef.current(
-        line.number,
-        Math.max(0, block.top - view.scrollDOM.scrollTop),
-        lineProgress
-      );
-    }
-
-    function reportCursorLine(view: EditorView): void {
-      const head = view.state.selection.main.head;
-      const block = view.lineBlockAt(head);
-      const line = view.state.doc.lineAt(head);
-      const lineTop =
-        view.coordsAtPos(line.from)?.top ??
-        view.scrollDOM.getBoundingClientRect().top + block.top - view.scrollDOM.scrollTop;
-      onCursorLineChangeRef.current(
-        line.number,
-        Math.max(0, lineTop - view.scrollDOM.getBoundingClientRect().top),
-        0
-      );
     }
 
     const view = new EditorView({
@@ -139,10 +125,13 @@ export function ConfigEditor(props: {
           highlightActiveLineGutter(),
           highlightActiveLine(),
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
           drawSelection(),
           placeholder(props.placeholderText),
           configEditorTheme,
+          validationCompartmentRef.current.of(
+            EditorView.decorations.of(validationDecorations(props.validationIssue))
+          ),
           disabledCompartmentRef.current.of([
             EditorState.readOnly.of(props.disabled),
             EditorView.editable.of(!props.disabled)
@@ -150,17 +139,11 @@ export function ConfigEditor(props: {
           EditorView.lineWrapping,
           EditorView.updateListener.of((update: ViewUpdate) => {
             if (update.docChanged) {
-              let nextValue = valueRef.current;
-              update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-                nextValue = `${nextValue.slice(0, fromA)}${inserted.toString()}${nextValue.slice(toA)}`;
-              });
-              valueRef.current = nextValue;
+              valueRef.current = update.state.doc.toString();
               if (!applyingExternalValueRef.current) {
+                internalValueSnapshotsRef.current.add(valueRef.current);
                 onChangeRef.current(update.view);
               }
-            }
-            if (update.docChanged || update.selectionSet) {
-              reportCursorLine(update.view);
             }
           })
         ]
@@ -170,15 +153,7 @@ export function ConfigEditor(props: {
     viewRef.current = view;
     valueRef.current = props.value;
     props.onViewReady(view);
-    reportCursorLine(view);
-
-    const handleScroll = (): void => {
-      reportViewportLine(view);
-    };
-    view.scrollDOM.addEventListener("scroll", handleScroll, { passive: true });
-
     return () => {
-      view.scrollDOM.removeEventListener("scroll", handleScroll);
       props.onViewReady(null);
       view.destroy();
       viewRef.current = null;
@@ -191,6 +166,11 @@ export function ConfigEditor(props: {
       return;
     }
 
+    if (internalValueSnapshotsRef.current.delete(props.value)) {
+      return;
+    }
+
+    internalValueSnapshotsRef.current.clear();
     valueRef.current = props.value;
     applyingExternalValueRef.current = true;
     try {
@@ -219,6 +199,19 @@ export function ConfigEditor(props: {
       ])
     });
   }, [props.disabled]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: validationCompartmentRef.current.reconfigure(
+        EditorView.decorations.of(validationDecorations(props.validationIssue))
+      )
+    });
+  }, [props.validationIssue]);
 
   return <div ref={hostRef} className="h-full min-w-0" />;
 }

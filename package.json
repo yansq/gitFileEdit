@@ -10,6 +10,7 @@
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
     "auth:create-user": "node scripts/create-user.cjs",
     "auth:create-admin-code": "node scripts/create-admin-code.cjs",
     "test:setup-remote": "node scripts/setup-test-remote.cjs",
@@ -17,6 +18,7 @@
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
+    "@codemirror/merge": "^6.12.2",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.1",
     "diff": "^7.0.0",
@@ -24,6 +26,7 @@
     "jsonc-parser": "^3.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "xml-formatter": "^3.7.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

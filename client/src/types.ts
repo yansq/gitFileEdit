@@ -30,6 +30,41 @@ export interface RepoEnvironmentOption {
   label: string;
   root: string;
   requiresAdminToEdit: boolean;
+  kind: "config" | "fragment-library";
+}
+
+export type PromptFragmentBatchItemStatus =
+  | "changed"
+  | "unchanged"
+  | "missing"
+  | "error";
+
+export interface PromptFragmentBatchItem {
+  path: string;
+  environmentId: string;
+  environmentLabel: string;
+  relativePath: string;
+  status: PromptFragmentBatchItemStatus;
+  message: string;
+  beforeContent?: string;
+  afterContent?: string;
+}
+
+export interface PromptFragmentBatchPreview {
+  baseHead: string;
+  sourcePath: string;
+  sourceBlob: string;
+  tagName: string;
+  sourceContent: string;
+  pattern: string;
+  environmentIds: string[];
+  matchedCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  missingCount: number;
+  errorCount: number;
+  canApply: boolean;
+  items: PromptFragmentBatchItem[];
 }
 
 export interface BootstrapResponse {
@@ -47,12 +82,15 @@ export interface BootstrapResponse {
   selectedFile: string | null;
 }
 
-export interface CommitSnapshot {
+export interface CommitSummary {
   hash: string;
   authorName: string;
   authorEmail: string;
   committedAt: string;
   message: string;
+}
+
+export interface CommitSnapshot extends CommitSummary {
   beforeContent: string;
   afterContent: string;
 }
@@ -89,8 +127,8 @@ export interface FileDetail {
   remoteBlob: string | null;
   isDirty: boolean;
   modifiedAt: string;
-  lastCommit: CommitSnapshot | null;
-  history: CommitSnapshot[];
+  lastCommit: CommitSummary | null;
+  history: CommitSummary[];
 }
 
 export interface FileConflictPayload {

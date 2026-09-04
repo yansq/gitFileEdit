@@ -17,8 +17,13 @@
       linear-gradient(180deg, #f5efe6 0%, #f2f4ef 48%, #eef3f7 100%);
   }
 
+  html {
+    overscroll-behavior: none;
+  }
+
   body {
     @apply m-0 min-h-screen;
+    overscroll-behavior: none;
     scrollbar-color: rgba(24, 48, 57, 0.28) transparent;
     scrollbar-width: thin;
   }
@@ -81,5 +86,10 @@
 
   #root {
     @apply min-h-screen;
+  }
+
+  .cm-merge-host > .cm-mergeView {
+    height: 100%;
+    overflow: auto;
   }
 }
