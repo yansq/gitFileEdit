@@ -1,30 +1,30 @@
 import { EditorSelection } from "@codemirror/state";
 import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
 import type { EditorView } from "@codemirror/view";
-import { parse as parseJson, printParseErrorCode, type ParseError } from "jsonc-parser";
 import {
   startTransition,
   lazy,
   Suspense,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   type CSSProperties,
   type ComponentProps,
-  type FormEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { parseDocument } from "yaml";
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
-import type { ConfigEditorValidationIssue } from "./components/ConfigEditor";
 import { FileTree } from "./components/FileTree";
 import { PromptFragmentBatchDialog } from "./components/PromptFragmentBatchDialog";
 import { PromptFragmentFileDialog } from "./components/PromptFragmentFileDialog";
 import { ToastStack } from "./components/ToastStack";
 import { Badge, Button, IconButton, SegmentedControl } from "./components/ui";
+import { useAuthSession } from "./features/auth/useAuthSession";
+import { useFileEditor, validateEditorContent } from "./features/editor/useFileEditor";
+import { useFileHistory } from "./features/history/useFileHistory";
+import { useRepositoryReview } from "./features/review/useRepositoryReview";
+import { ApiRequestError, requestJson } from "./lib/api";
 import { buildFileTree, getPathWithinRoot, replaceEnvironmentRoot } from "./lib/filePaths";
 import { formatTime, formatXml, getCommitSubject } from "./lib/format";
 import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
@@ -41,21 +41,13 @@ import {
   workspaceWindowClass,
 } from "./lib/ui";
 import type {
-  AuthUser,
   BootstrapResponse,
   CommitSnapshot,
-  CommitSummary,
-  EnvironmentReviewCommit,
-  EnvironmentReviewDiff,
   FileConflictPayload,
   FileDetail,
   RepoEnvironmentOption,
   RepoFileSummary,
 } from "./types";
-
-interface AuthResponse {
-  user: AuthUser;
-}
 
 interface EnvironmentSettingsResponse {
   environments: RepoEnvironmentOption[];
@@ -81,164 +73,6 @@ type ActiveDialog =
   | { type: "fragment-batch" }
   | { type: "fragment-file"; mode: "create" | "rename" }
   | null;
-
-interface EditorSearchState {
-  open: boolean;
-  input: string;
-  query: string;
-  index: number;
-}
-
-type EditorSearchAction =
-  | { type: "close" }
-  | { type: "inputChanged"; value: string }
-  | { type: "open" }
-  | { type: "searched"; query: string; index: number };
-
-const initialEditorSearchState: EditorSearchState = {
-  open: false,
-  input: "",
-  query: "",
-  index: -1,
-};
-
-function editorSearchReducer(
-  state: EditorSearchState,
-  action: EditorSearchAction,
-): EditorSearchState {
-  switch (action.type) {
-    case "open":
-      return state.open ? state : { ...state, open: true };
-    case "close":
-      return state.open ? { ...state, open: false } : state;
-    case "inputChanged":
-      return { ...state, input: action.value };
-    case "searched":
-      return { ...state, query: action.query, index: action.index };
-  }
-}
-
-interface HistoryState {
-  selectedHash: string;
-  detail: CommitSnapshot | null;
-  status: "idle" | "loading" | "ready";
-}
-
-type HistoryAction =
-  | { type: "clearDetail" }
-  | { type: "loadFailed" }
-  | { type: "loadStarted" }
-  | { type: "loadSucceeded"; detail: CommitSnapshot }
-  | { type: "reset" }
-  | { type: "select"; hash: string };
-
-const initialHistoryState: HistoryState = {
-  selectedHash: "",
-  detail: null,
-  status: "idle",
-};
-
-function historyReducer(state: HistoryState, action: HistoryAction): HistoryState {
-  switch (action.type) {
-    case "reset":
-      return initialHistoryState;
-    case "select":
-      return action.hash === state.selectedHash
-        ? state
-        : { selectedHash: action.hash, detail: null, status: "idle" };
-    case "clearDetail":
-      return state.detail || state.status !== "idle"
-        ? { ...state, detail: null, status: "idle" }
-        : state;
-    case "loadStarted":
-      return { ...state, detail: null, status: "loading" };
-    case "loadSucceeded":
-      return { ...state, detail: action.detail, status: "ready" };
-    case "loadFailed":
-      return { ...state, detail: null, status: "idle" };
-  }
-}
-
-interface ReviewState {
-  since: string;
-  until: string;
-  loading: boolean;
-  commits: EnvironmentReviewCommit[];
-  selectedHash: string;
-  selectedPath: string;
-  diff: EnvironmentReviewDiff | null;
-  diffLoading: boolean;
-}
-
-type ReviewAction =
-  | { type: "clearResults" }
-  | { type: "diffFailed" }
-  | { type: "diffStarted"; hash: string; path: string }
-  | { type: "diffSucceeded"; diff: EnvironmentReviewDiff }
-  | { type: "queryFailed" }
-  | { type: "queryStarted" }
-  | { type: "querySucceeded"; commits: EnvironmentReviewCommit[] }
-  | { type: "selectCommit"; hash: string }
-  | { type: "setSince"; value: string }
-  | { type: "setUntil"; value: string };
-
-function createInitialReviewState(): ReviewState {
-  return {
-    since: toDateInputValue(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)),
-    until: toDateInputValue(new Date()),
-    loading: false,
-    commits: [],
-    selectedHash: "",
-    selectedPath: "",
-    diff: null,
-    diffLoading: false,
-  };
-}
-
-function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
-  switch (action.type) {
-    case "setSince":
-      return { ...state, since: action.value };
-    case "setUntil":
-      return { ...state, until: action.value };
-    case "clearResults":
-      return {
-        ...state,
-        loading: false,
-        commits: [],
-        selectedHash: "",
-        selectedPath: "",
-        diff: null,
-        diffLoading: false,
-      };
-    case "queryStarted":
-      return { ...state, loading: true };
-    case "querySucceeded":
-      return { ...state, loading: false, commits: action.commits };
-    case "queryFailed":
-      return { ...state, loading: false };
-    case "selectCommit":
-      return {
-        ...state,
-        selectedHash: action.hash,
-        selectedPath: "",
-        diff: null,
-        diffLoading: false,
-      };
-    case "diffStarted":
-      return {
-        ...state,
-        selectedHash: action.hash,
-        selectedPath: action.path,
-        diff: null,
-        diffLoading: true,
-      };
-    case "diffSucceeded":
-      return { ...state, diff: action.diff, diffLoading: false };
-    case "diffFailed":
-      return { ...state, diffLoading: false };
-  }
-}
 
 const fileListMinWidth = 260;
 const fileListDefaultWidth = 320;
@@ -310,45 +144,6 @@ function SearchIcon(): JSX.Element {
   );
 }
 
-class ApiRequestError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public payload: unknown,
-  ) {
-    super(message);
-  }
-}
-
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-    },
-    ...init,
-  });
-
-  if (!response.ok) {
-    const fallbackText = await response.text();
-    let payload: unknown = null;
-    try {
-      payload = fallbackText ? JSON.parse(fallbackText) : null;
-    } catch {
-      payload = null;
-    }
-
-    const message =
-      payload && typeof payload === "object" && "message" in payload
-        ? String((payload as { message?: unknown }).message)
-        : payload && typeof payload === "object" && "error" in payload
-          ? String((payload as { error?: unknown }).error)
-          : fallbackText || "请求失败";
-    throw new ApiRequestError(message, response.status, payload);
-  }
-
-  return (await response.json()) as T;
-}
-
 function isProtectedEnvironmentId(environmentId: string | undefined): boolean {
   return environmentId === "uat";
 }
@@ -397,170 +192,24 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function toDateInputValue(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function findTextMatches(content: string, query: string): Array<{ from: number; to: number }> {
-  if (!query) {
-    return [];
-  }
-
-  const matches: Array<{ from: number; to: number }> = [];
-  const lowerContent = content.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  let from = 0;
-
-  while (from < content.length) {
-    const index = lowerContent.indexOf(lowerQuery, from);
-    if (index === -1) {
-      break;
-    }
-
-    matches.push({ from: index, to: index + query.length });
-    from = index + query.length;
-  }
-
-  return matches;
-}
-
-function getPositionText(content: string, offset: number): string {
-  const beforeError = content.slice(0, Math.max(0, offset));
-  const lines = beforeError.split("\n");
-  return `第 ${lines.length} 行第 ${lines[lines.length - 1].length + 1} 列`;
-}
-
-function getOffsetFromLineColumn(
-  content: string,
-  lineNumber: number,
-  columnNumber: number,
-): number {
-  let line = 1;
-  let column = 1;
-  for (let index = 0; index < content.length; index += 1) {
-    if (line === lineNumber && column === columnNumber) {
-      return index;
-    }
-    if (content.charCodeAt(index) === 10) {
-      line += 1;
-      column = 1;
-    } else {
-      column += 1;
-    }
-  }
-
-  return content.length;
-}
-
-function createValidationIssue(
-  content: string,
-  from: number,
-  length: number,
-  message: string,
-): ConfigEditorValidationIssue | null {
-  if (!content) {
-    return null;
-  }
-
-  let safeFrom = clampNumber(from, 0, Math.max(0, content.length - 1));
-  while (safeFrom > 0 && /\s/.test(content[safeFrom] ?? "")) {
-    safeFrom -= 1;
-  }
-  const safeTo = clampNumber(safeFrom + Math.max(1, length), safeFrom + 1, content.length);
-  return {
-    from: safeFrom,
-    to: safeTo,
-    message,
-  };
-}
-
-function getEditorValidationIssue(
-  filePath: string,
-  content: string,
-  forceYaml = false,
-): ConfigEditorValidationIssue | null {
-  const extension = forceYaml ? "yaml" : filePath.split(".").pop()?.toLocaleLowerCase();
-  if (extension === "json") {
-    const errors: ParseError[] = [];
-    parseJson(content, errors, {
-      allowTrailingComma: false,
-      disallowComments: true,
-    });
-    const firstError = errors[0];
-    if (!firstError) {
-      return null;
-    }
-
-    return createValidationIssue(
-      content,
-      firstError.offset,
-      firstError.length,
-      `${filePath} JSON 格式错误：${getPositionText(content, firstError.offset)}，${printParseErrorCode(firstError.error)}`,
-    );
-  }
-
-  if (extension === "yaml" || extension === "yml") {
-    const document = parseDocument(content, {
-      prettyErrors: false,
-      strict: true,
-    });
-    const firstError = document.errors[0];
-    if (!firstError) {
-      return null;
-    }
-
-    const from = firstError.linePos?.[0]
-      ? getOffsetFromLineColumn(content, firstError.linePos[0].line, firstError.linePos[0].col)
-      : firstError.pos[0];
-    const length = Math.max(1, firstError.pos[1] - firstError.pos[0]);
-    return createValidationIssue(
-      content,
-      from,
-      length,
-      `${filePath} YAML 格式错误：${getPositionText(content, from)}，${firstError.message}`,
-    );
-  }
-
-  return null;
-}
-
 export default function App(): JSX.Element {
   const editorSurfaceRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
-  const editorSearchInputRef = useRef<HTMLInputElement>(null);
   const fileSearchInputRef = useRef<HTMLInputElement>(null);
-  const historyDetailCacheRef = useRef(new Map<string, CommitSnapshot>());
   const layoutRef = useRef<HTMLDivElement>(null);
-  const reviewRequestIdRef = useRef(0);
-  const reviewDiffRequestIdRef = useRef(0);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
   const [fileQuery, setFileQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
-  const [editorContent, setEditorContent] = useState("");
-  const [editorValidationIssue, setEditorValidationIssue] =
-    useState<ConfigEditorValidationIssue | null>(null);
-  const [editorViewMode, setEditorViewMode] = useState<"diff" | "editor">("editor");
   const [activeWorkspaceSection, setActiveWorkspaceSection] = useState<"editor" | "history">(
     "editor",
   );
-  const [editorSearchState, dispatchEditorSearch] = useReducer(
-    editorSearchReducer,
-    initialEditorSearchState,
-  );
-  const [editorDirty, setEditorDirty] = useState(false);
-  const [fileConflict, setFileConflict] = useState<FileConflictPayload | null>(null);
-  const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const [gitForm, setGitForm] = useState({
     extraMessage: "",
   });
   const [discarding, setDiscarding] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const [historyState, dispatchHistory] = useReducer(historyReducer, initialHistoryState);
   const [restoringHash, setRestoringHash] = useState<string | null>(null);
   const [pendingReplay, setPendingReplay] = useState<PendingReplay | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -570,50 +219,11 @@ export default function App(): JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveNotice, setLiveNotice] = useState<string | null>(null);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [loginForm, setLoginForm] = useState({
-    username: "",
-    password: "",
-    confirmPassword: "",
-  });
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [activationCode, setActivationCode] = useState("");
-  const [activatingAdmin, setActivatingAdmin] = useState(false);
   const [mainView, setMainView] = useState<MainView>("workspace");
   const [environmentDraft, setEnvironmentDraft] = useState<RepoEnvironmentOption[]>([]);
   const [savingEnvironmentSettings, setSavingEnvironmentSettings] = useState(false);
   const [activeDialog, setActiveDialog] = useState<ActiveDialog>(null);
   const [fragmentFileOperation, setFragmentFileOperation] = useState(false);
-  const [reviewState, dispatchReview] = useReducer(
-    reviewReducer,
-    undefined,
-    createInitialReviewState,
-  );
-
-  const {
-    index: editorSearchIndex,
-    input: editorSearchInput,
-    open: editorSearchOpen,
-    query: editorSearch,
-  } = editorSearchState;
-  const {
-    detail: selectedHistoryDetail,
-    selectedHash: selectedHistoryHash,
-    status: historyDetailStatus,
-  } = historyState;
-  const historyDetailLoading = historyDetailStatus === "loading";
-  const {
-    commits: reviewCommits,
-    diff: reviewDiff,
-    diffLoading: reviewDiffLoading,
-    loading: reviewLoading,
-    selectedHash: selectedReviewHash,
-    selectedPath: selectedReviewPath,
-    since: reviewSince,
-    until: reviewUntil,
-  } = reviewState;
 
   const accountMenuOpen = openHeaderPopover === "account";
   const showRepoDetails = openHeaderPopover === "repository";
@@ -624,9 +234,97 @@ export default function App(): JSX.Element {
   const fragmentBatchOpen = activeDialog?.type === "fragment-batch";
   const fragmentFileDialogMode =
     activeDialog?.type === "fragment-file" ? activeDialog.mode : null;
+  const editorController = useFileEditor({
+    active: activeWorkspaceSection === "editor" && !reviewOpen,
+    filePath: selectedPath,
+  });
+  const {
+    conflict: fileConflict,
+    content: editorContent,
+    dirty: editorDirty,
+    search: editorSearchController,
+    setConflict: setFileConflict,
+    setContent: setEditorContent,
+    setDirty: setEditorDirty,
+    setValidationError: setFileValidationError,
+    setViewMode: setEditorViewMode,
+    validationError: fileValidationError,
+    validationIssue: editorValidationIssue,
+    viewMode: editorViewMode,
+  } = editorController;
+  const files: RepoFileSummary[] = bootstrap?.files ?? [];
+  const environmentOptions = bootstrap?.config.environments ?? [];
+  const activeEnvironment =
+    environmentOptions.find((item) => item.id === selectedEnvironment) ?? environmentOptions[0];
+  const fileHistory = fileDetail?.history ?? [];
+  const historyController = useFileHistory({
+    active: activeWorkspaceSection === "history" && !reviewOpen,
+    commits: fileHistory,
+    onAuthRequired: handleAuthRequired,
+    onError: setError,
+    selectedPath,
+  });
+  const reviewController = useRepositoryReview({
+    environmentId: activeEnvironment?.id,
+    onAuthRequired: handleAuthRequired,
+    onError: setError,
+    onOpen: () => setMainView("review"),
+  });
+  const authController = useAuthSession({
+    onActivated: () => {
+      setActiveDialog(null);
+      setOpenHeaderPopover(null);
+    },
+    onAuthenticated: () => refreshBootstrap(undefined, false),
+    onError: setError,
+    onMessage: setMessage,
+    onSessionReset: resetWorkspaceState,
+  });
+  const {
+    displayedIndex: displayedEditorSearchIndex,
+    input: editorSearchInput,
+    inputRef: editorSearchInputRef,
+    isOpen: editorSearchOpen,
+    matches: editorSearchMatches,
+    open: openEditorSearch,
+    query: editorSearch,
+  } = editorSearchController;
+  const {
+    detail: selectedHistoryDetail,
+    isLoading: historyDetailLoading,
+    selectedCommit: selectedHistory,
+  } = historyController;
+  const {
+    commits: reviewCommits,
+    diff: reviewDiff,
+    diffLoading: reviewDiffLoading,
+    loadChanges: loadReviewChanges,
+    loadDiff: loadReviewDiff,
+    loading: reviewLoading,
+    selectCommit: selectReviewCommit,
+    selectedCommit: selectedReviewCommit,
+    selectedHash: selectedReviewHash,
+    selectedPath: selectedReviewPath,
+    since: reviewSince,
+    until: reviewUntil,
+  } = reviewController;
+  const {
+    activate: submitActivationCode,
+    activating: activatingAdmin,
+    activationCode,
+    checked: authChecked,
+    loginForm,
+    logout: logoutCurrentUser,
+    mode: authMode,
+    setActivationCode,
+    setLoginForm,
+    submit: submitLogin,
+    submitting: loggingIn,
+    toggleMode: toggleAuthMode,
+    user: authUser,
+  } = authController;
 
-  function resetAuthenticatedState(): void {
-    setAuthUser(null);
+  function resetWorkspaceState(): void {
     setBootstrap(null);
     setSelectedPath("");
     setFileDetail(null);
@@ -636,26 +334,16 @@ export default function App(): JSX.Element {
     setFileValidationError(null);
     setPendingReplay(null);
     setMainView("workspace");
-    dispatchReview({ type: "clearResults" });
-    dispatchHistory({ type: "reset" });
-    historyDetailCacheRef.current.clear();
+    reviewController.clearResults();
+    historyController.reset(true);
     setLiveNotice(null);
     setOpenHeaderPopover(null);
     setActiveDialog(null);
-    setActivationCode("");
     setEnvironmentDraft([]);
   }
 
   function handleAuthRequired(errorValue: unknown): boolean {
-    if (errorValue instanceof ApiRequestError && errorValue.status === 401) {
-      resetAuthenticatedState();
-      setAuthChecked(true);
-      setError(null);
-      setMessage(null);
-      return true;
-    }
-
-    return false;
+    return authController.handleAuthRequired(errorValue);
   }
 
   function getLatestEditorContent(): string {
@@ -692,7 +380,7 @@ export default function App(): JSX.Element {
           : derivedEnvironment,
       );
       if (nextPath !== selectedPath) {
-        dispatchHistory({ type: "reset" });
+        historyController.reset();
       }
       setSelectedPath(nextPath);
       if (!preserveForm) {
@@ -728,30 +416,6 @@ export default function App(): JSX.Element {
     });
   }
 
-  const fileHistory = fileDetail?.history ?? [];
-  const selectedHistory: CommitSummary | null =
-    fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const authResponse = await fetch("/api/auth/me");
-        if (!authResponse.ok) {
-          resetAuthenticatedState();
-          setError(null);
-          return;
-        }
-        const authPayload = (await authResponse.json()) as AuthResponse;
-        setAuthUser(authPayload.user);
-        await refreshBootstrap(undefined, false);
-      } catch (fetchError) {
-        setError((fetchError as Error).message);
-      } finally {
-        setAuthChecked(true);
-      }
-    })();
-  }, []);
-
   useEffect(() => {
     void refreshFile(selectedPath, false).catch((fetchError) => {
       if (handleAuthRequired(fetchError)) {
@@ -760,67 +424,6 @@ export default function App(): JSX.Element {
       setError((fetchError as Error).message);
     });
   }, [selectedPath]);
-
-  useEffect(() => {
-    const effectiveHistoryHash = selectedHistory?.hash ?? "";
-    if (
-      activeWorkspaceSection !== "history" ||
-      reviewOpen ||
-      !selectedPath ||
-      !effectiveHistoryHash
-    ) {
-      dispatchHistory({ type: "clearDetail" });
-      return;
-    }
-
-    const cacheKey = `${selectedPath}\u0000${effectiveHistoryHash}`;
-    const cachedDetail = historyDetailCacheRef.current.get(cacheKey);
-    if (cachedDetail) {
-      dispatchHistory({ type: "loadSucceeded", detail: cachedDetail });
-      return;
-    }
-
-    let cancelled = false;
-    dispatchHistory({ type: "loadStarted" });
-    void requestJson<CommitSnapshot>(
-      `/api/file/history?path=${encodeURIComponent(selectedPath)}&hash=${encodeURIComponent(effectiveHistoryHash)}`,
-    )
-      .then((detail) => {
-        if (!cancelled) {
-          historyDetailCacheRef.current.set(cacheKey, detail);
-          if (historyDetailCacheRef.current.size > 50) {
-            const oldestKey = historyDetailCacheRef.current.keys().next().value;
-            if (oldestKey) historyDetailCacheRef.current.delete(oldestKey);
-          }
-          dispatchHistory({ type: "loadSucceeded", detail });
-        }
-      })
-      .catch((fetchError) => {
-        if (!cancelled && !handleAuthRequired(fetchError)) {
-          dispatchHistory({ type: "loadFailed" });
-          setError((fetchError as Error).message);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeWorkspaceSection, reviewOpen, selectedHistory?.hash, selectedPath]);
-
-  useEffect(() => {
-    if (activeWorkspaceSection !== "editor" || reviewOpen || !selectedPath) {
-      setEditorValidationIssue(null);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setEditorValidationIssue(getEditorValidationIssue(selectedPath, editorContent));
-    }, 350);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [activeWorkspaceSection, editorContent, reviewOpen, selectedPath]);
 
   useEffect(() => {
     if (!authUser) {
@@ -976,7 +579,7 @@ export default function App(): JSX.Element {
         setEditorContent(detail.content);
         setEditorDirty(false);
       });
-      dispatchHistory({ type: "select", hash: detail.history[0]?.hash ?? "" });
+      historyController.selectHash(detail.history[0]?.hash ?? "");
       setMessage("已丢弃当前文件的未提交修改");
       await refreshBootstrap(selectedPath);
     } catch (discardError) {
@@ -1208,172 +811,6 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function loadReviewChanges(environmentId = activeEnvironment?.id): Promise<void> {
-    if (!environmentId) {
-      setError("请先选择环境");
-      return;
-    }
-
-    const requestId = reviewRequestIdRef.current + 1;
-    reviewRequestIdRef.current = requestId;
-    setMainView("review");
-    dispatchReview({ type: "queryStarted" });
-    setError(null);
-
-    try {
-      const params = new URLSearchParams({
-        environmentId,
-        since: reviewSince,
-        until: reviewUntil,
-      });
-      const payload = await requestJson<{ commits: EnvironmentReviewCommit[] }>(
-        `/api/review/changes?${params.toString()}`,
-      );
-      if (requestId !== reviewRequestIdRef.current) {
-        return;
-      }
-      dispatchReview({ type: "querySucceeded", commits: payload.commits });
-      const firstCommit = payload.commits[0] ?? null;
-      selectReviewCommit(firstCommit, environmentId);
-    } catch (reviewError) {
-      if (requestId !== reviewRequestIdRef.current) {
-        return;
-      }
-      if (handleAuthRequired(reviewError)) {
-        return;
-      }
-      dispatchReview({ type: "queryFailed" });
-      setError((reviewError as Error).message);
-    }
-  }
-
-  function selectReviewCommit(
-    commit: EnvironmentReviewCommit | null,
-    environmentId = activeEnvironment?.id,
-  ): void {
-    dispatchReview({ type: "selectCommit", hash: commit?.hash ?? "" });
-    if (commit?.files.length === 1) {
-      void loadReviewDiff(commit, commit.files[0].path, environmentId);
-      return;
-    }
-    reviewDiffRequestIdRef.current += 1;
-  }
-
-  async function loadReviewDiff(
-    commit: EnvironmentReviewCommit,
-    filePath: string,
-    environmentId = activeEnvironment?.id,
-  ): Promise<void> {
-    if (!environmentId) {
-      return;
-    }
-
-    const diffRequestId = reviewDiffRequestIdRef.current + 1;
-    reviewDiffRequestIdRef.current = diffRequestId;
-    dispatchReview({ type: "diffStarted", hash: commit.hash, path: filePath });
-    setError(null);
-
-    try {
-      const params = new URLSearchParams({
-        environmentId,
-        hash: commit.hash,
-        path: filePath,
-      });
-      const diff = await requestJson<EnvironmentReviewDiff>(
-        `/api/review/diff?${params.toString()}`,
-      );
-      if (diffRequestId !== reviewDiffRequestIdRef.current) {
-        return;
-      }
-      dispatchReview({ type: "diffSucceeded", diff });
-    } catch (reviewError) {
-      if (diffRequestId !== reviewDiffRequestIdRef.current) {
-        return;
-      }
-      if (handleAuthRequired(reviewError)) {
-        return;
-      }
-      dispatchReview({ type: "diffFailed" });
-      setError((reviewError as Error).message);
-    }
-  }
-
-  async function submitLogin(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setLoggingIn(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      if (authMode === "register" && loginForm.password !== loginForm.confirmPassword) {
-        throw new Error("两次输入的密码不一致");
-      }
-
-      const payload = await requestJson<AuthResponse>(
-        authMode === "register" ? "/api/auth/register" : "/api/auth/login",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            username: loginForm.username,
-            password: loginForm.password,
-          }),
-        },
-      );
-      setAuthUser(payload.user);
-      setLoginForm({
-        username: "",
-        password: "",
-        confirmPassword: "",
-      });
-      await refreshBootstrap(undefined, false);
-    } catch (loginError) {
-      if (handleAuthRequired(loginError)) {
-        return;
-      }
-      setError((loginError as Error).message);
-    } finally {
-      setLoggingIn(false);
-      setAuthChecked(true);
-    }
-  }
-
-  async function logoutCurrentUser(): Promise<void> {
-    await requestJson<{ ok: boolean }>("/api/auth/logout", {
-      method: "POST",
-    }).catch(() => ({ ok: true }));
-    resetAuthenticatedState();
-    setError(null);
-    setMessage(null);
-  }
-
-  async function submitActivationCode(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setActivatingAdmin(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const payload = await requestJson<AuthResponse>("/api/auth/activate-admin", {
-        method: "POST",
-        body: JSON.stringify({
-          code: activationCode,
-        }),
-      });
-      setAuthUser(payload.user);
-      setActivationCode("");
-      setActiveDialog(null);
-      setOpenHeaderPopover(null);
-      setMessage("已升级为管理员");
-    } catch (activationError) {
-      if (handleAuthRequired(activationError)) {
-        return;
-      }
-      setError((activationError as Error).message);
-    } finally {
-      setActivatingAdmin(false);
-    }
-  }
-
   async function openEnvironmentSettings(): Promise<void> {
     if (authUser?.role !== "admin") {
       setError("仅管理员可配置环境");
@@ -1513,10 +950,6 @@ export default function App(): JSX.Element {
     }
   }
 
-  const files: RepoFileSummary[] = bootstrap?.files ?? [];
-  const environmentOptions = bootstrap?.config.environments ?? [];
-  const activeEnvironment =
-    environmentOptions.find((item) => item.id === selectedEnvironment) ?? environmentOptions[0];
   const isFragmentLibrary = activeEnvironment?.kind === "fragment-library";
   const selectedFragmentRelativePath =
     isFragmentLibrary && selectedPath && activeEnvironment
@@ -1575,30 +1008,9 @@ export default function App(): JSX.Element {
     !isProtectedFileReadOnly &&
     !committing &&
     (editorDirty || Boolean(fileDetail?.isDirty));
-  const editorSearchMatches = useMemo(
-    () => findTextMatches(editorContent, editorSearch),
-    [editorContent, editorSearch],
-  );
-  const displayedEditorSearchIndex = editorSearchMatches.length
-    ? clampNumber(editorSearchIndex, 0, editorSearchMatches.length - 1)
-    : -1;
-  const selectedReviewCommit =
-    reviewCommits.find((commit) => commit.hash === selectedReviewHash) ?? reviewCommits[0] ?? null;
   const workspaceLayoutStyle = {
     "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`,
   } as CSSProperties;
-
-  function focusEditorSearchInput(): void {
-    window.requestAnimationFrame(() => {
-      editorSearchInputRef.current?.focus();
-      editorSearchInputRef.current?.select();
-    });
-  }
-
-  function openEditorSearch(): void {
-    dispatchEditorSearch({ type: "open" });
-    focusEditorSearchInput();
-  }
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent): void {
@@ -1656,33 +1068,12 @@ export default function App(): JSX.Element {
   }
 
   function findAdjacentEditorSearchMatch(direction: -1 | 1): void {
-    if (!editorSearchInput) {
-      return;
-    }
-
     const currentContent = getLatestEditorContent();
     if (currentContent !== editorContent) {
       setEditorContent(currentContent);
     }
-    const isNewSearch = editorSearchInput !== editorSearch;
-    const query = isNewSearch ? editorSearchInput : editorSearch;
-    const matches = findTextMatches(currentContent, query);
-
-    if (!matches.length) {
-      dispatchEditorSearch({ type: "searched", query: editorSearchInput, index: -1 });
-      return;
-    }
-
-    const currentIndex = clampNumber(editorSearchIndex, 0, matches.length - 1);
-    const nextIndex =
-      isNewSearch || editorSearchIndex < 0
-        ? direction < 0
-          ? matches.length - 1
-          : 0
-        : (currentIndex + direction + matches.length) % matches.length;
-
-    dispatchEditorSearch({ type: "searched", query: editorSearchInput, index: nextIndex });
-    scrollToEditorSearchMatch(matches[nextIndex]);
+    const match = editorSearchController.findAdjacent(currentContent, direction);
+    if (match) scrollToEditorSearchMatch(match);
   }
 
   function goToAdjacentChange(direction: -1 | 1): void {
@@ -1707,7 +1098,7 @@ export default function App(): JSX.Element {
     }
 
     const validationError =
-      getEditorValidationIssue(selectedPath, editorContent, true)?.message ?? null;
+      validateEditorContent(selectedPath, editorContent, true)?.message ?? null;
     if (validationError) {
       setMessage(null);
       setError(validationError);
@@ -1747,15 +1138,7 @@ export default function App(): JSX.Element {
         loginForm={loginForm}
         onSubmit={(event) => void submitLogin(event)}
         onFormChange={setLoginForm}
-        onModeToggle={() => {
-          setAuthMode((current) => (current === "login" ? "register" : "login"));
-          setError(null);
-          setLoginForm({
-            username: "",
-            password: "",
-            confirmPassword: "",
-          });
-        }}
+        onModeToggle={toggleAuthMode}
       />
     );
   }
@@ -2134,9 +1517,8 @@ export default function App(): JSX.Element {
                   onChange={(event) => {
                     const nextEnvironmentId = event.target.value;
                     setSelectedEnvironment(nextEnvironmentId);
-                    reviewDiffRequestIdRef.current += 1;
-                    dispatchReview({ type: "clearResults" });
-                    dispatchHistory({ type: "reset" });
+                    reviewController.clearResults();
+                    historyController.reset();
                     const nextEnvironment = environmentOptions.find(
                       (item) => item.id === nextEnvironmentId,
                     );
@@ -2268,18 +1650,14 @@ export default function App(): JSX.Element {
                           className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
                           type="date"
                           value={reviewSince}
-                          onChange={(event) =>
-                            dispatchReview({ type: "setSince", value: event.target.value })
-                          }
+                          onChange={(event) => reviewController.setSince(event.target.value)}
                         />
                         <span className="text-[#8a999f]">-</span>
                         <input
                           className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
                           type="date"
                           value={reviewUntil}
-                          onChange={(event) =>
-                            dispatchReview({ type: "setUntil", value: event.target.value })
-                          }
+                          onChange={(event) => reviewController.setUntil(event.target.value)}
                         />
                       </div>
                     </div>
@@ -2601,7 +1979,7 @@ export default function App(): JSX.Element {
                     aria-expanded={editorSearchOpen}
                     onClick={() =>
                       editorSearchOpen
-                        ? dispatchEditorSearch({ type: "close" })
+                        ? editorSearchController.close()
                         : openEditorSearch()
                     }
                     disabled={!selectedPath}
@@ -2636,16 +2014,14 @@ export default function App(): JSX.Element {
                       aria-label="搜索当前文件内容"
                       className={searchFieldInputClass}
                       disabled={!selectedPath}
-                      onChange={(event) =>
-                        dispatchEditorSearch({ type: "inputChanged", value: event.target.value })
-                      }
+                      onChange={(event) => editorSearchController.setInput(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
                           findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
                         }
                         if (event.key === "Escape") {
-                          dispatchEditorSearch({ type: "close" });
+                          editorSearchController.close();
                           editorViewRef.current?.focus();
                         }
                       }}
@@ -2679,7 +2055,7 @@ export default function App(): JSX.Element {
                     <IconButton
                       label="关闭内容搜索"
                       onClick={() => {
-                        dispatchEditorSearch({ type: "close" });
+                        editorSearchController.close();
                         editorViewRef.current?.focus();
                       }}
                       size="sm"
@@ -2855,7 +2231,7 @@ export default function App(): JSX.Element {
                             type="button"
                             onClick={() => {
                               if (commit.hash !== selectedHistory?.hash) {
-                                dispatchHistory({ type: "select", hash: commit.hash });
+                                historyController.selectHash(commit.hash);
                               }
                             }}
                           >
