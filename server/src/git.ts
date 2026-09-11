@@ -6,7 +6,6 @@ import {
   access,
   mkdir,
   readFile,
-  readdir,
   stat,
   unlink,
   writeFile
@@ -78,13 +77,7 @@ function normalizeAllowedFilePath(config: AppConfig, repoPath: string, filePath:
 }
 
 function getEnvironmentLabelForFile(config: AppConfig, repoRelativePath: string): string | null {
-  const normalizedPath = repoRelativePath.replace(/^\/+/, "");
-  const matchedEnvironment = getEnvironmentOptions(config).find((environment) => {
-    const root = environment.root.replace(/^\/+|\/+$/g, "");
-    return normalizedPath === root || normalizedPath.startsWith(`${root}/`);
-  });
-
-  return matchedEnvironment?.label ?? null;
+  return getEnvironmentForFile(config, repoRelativePath)?.label ?? null;
 }
 
 function getEnvironmentRoot(config: AppConfig, repoPath: string, environmentId: string): string {
@@ -110,13 +103,7 @@ function getEnvironmentForFile(config: AppConfig, repoRelativePath: string) {
 export function getEnvironmentIdForFile(config: AppConfig, filePath: string): string | null {
   const repoPath = resolveRepoPath(config);
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
-  const normalizedPath = repoRelativePath.replace(/^\/+/, "");
-  const matchedEnvironment = getEnvironmentOptions(config).find((environment) => {
-    const root = environment.root.replace(/^\/+|\/+$/g, "");
-    return normalizedPath === root || normalizedPath.startsWith(`${root}/`);
-  });
-
-  return matchedEnvironment?.id ?? null;
+  return getEnvironmentForFile(config, repoRelativePath)?.id ?? null;
 }
 
 function getConfiguredRepoAuth(config: AppConfig): {
@@ -1058,15 +1045,6 @@ export async function restoreFileToHistoryCommit(
     head,
     path: repoRelativePath
   };
-}
-
-export async function hasAnyRepoContent(repoPath: string): Promise<boolean> {
-  try {
-    const entries = await readdir(repoPath);
-    return entries.length > 0;
-  } catch {
-    return false;
-  }
 }
 
 function normalizeFragmentRelativePath(relativePathValue: string): string {

@@ -4,6 +4,66 @@
 
 @layer base {
   :root {
+    --color-canvas: 240 243 242;
+    --color-surface: 255 255 255;
+    --color-surface-raised: 255 255 255;
+    --color-surface-subtle: 246 249 247;
+    --color-surface-muted: 232 241 240;
+    --color-foreground: 24 48 57;
+    --color-muted-foreground: 82 103 110;
+    --color-subtle-foreground: 114 129 136;
+    --color-border: 223 228 230;
+    --color-border-strong: 199 210 207;
+    --color-primary: 14 107 114;
+    --color-primary-hover: 11 91 97;
+    --color-primary-active: 9 76 82;
+    --color-primary-foreground: 255 255 255;
+    --color-primary-soft: 230 243 241;
+    --color-success: 29 140 104;
+    --color-success-soft: 231 246 239;
+    --color-warning: 157 105 31;
+    --color-warning-soft: 250 241 218;
+    --color-danger: 159 47 32;
+    --color-danger-hover: 130 38 26;
+    --color-danger-soft: 252 235 231;
+
+    --radius-ui-xs: 4px;
+    --radius-ui-sm: 6px;
+    --radius-ui-md: 8px;
+    --radius-ui-lg: 12px;
+    --radius-ui-full: 999px;
+
+    --space-ui-1: 4px;
+    --space-ui-2: 8px;
+    --space-ui-3: 12px;
+    --space-ui-4: 16px;
+    --space-ui-5: 20px;
+    --space-ui-6: 24px;
+    --space-ui-8: 32px;
+    --space-ui-10: 40px;
+
+    --font-size-ui-xs: 12px;
+    --font-size-ui-sm: 13px;
+    --font-size-ui-md: 14px;
+    --font-size-ui-lg: 16px;
+    --font-size-ui-xl: 20px;
+    --line-height-ui-xs: 16px;
+    --line-height-ui-sm: 18px;
+    --line-height-ui-md: 20px;
+    --line-height-ui-lg: 24px;
+    --line-height-ui-xl: 28px;
+
+    --shadow-ui-xs: 0 1px 2px rgb(24 48 57 / 0.06);
+    --shadow-ui-sm: 0 4px 14px rgb(24 48 57 / 0.1);
+    --shadow-ui-overlay: 0 18px 48px rgb(24 48 57 / 0.2);
+    --shadow-ui-inset: inset 0 1px 2px rgb(24 48 57 / 0.06);
+
+    --motion-duration-fast: 120ms;
+    --motion-duration-normal: 180ms;
+    --motion-duration-slow: 260ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
     color-scheme: light;
     font-family: theme("fontFamily.sans");
     font-synthesis: none;
@@ -11,10 +71,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     color: #18242d;
-    background:
-      radial-gradient(circle at top left, rgba(255, 188, 120, 0.45), transparent 30%),
-      radial-gradient(circle at top right, rgba(61, 154, 139, 0.2), transparent 25%),
-      linear-gradient(180deg, #f5efe6 0%, #f2f4ef 48%, #eef3f7 100%);
+    background: rgb(var(--color-canvas));
   }
 
   html {
@@ -91,5 +148,27 @@
   .cm-merge-host > .cm-mergeView {
     height: 100%;
     overflow: auto;
+    overscroll-behavior-y: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0.01ms;
+    --motion-duration-normal: 0.01ms;
+    --motion-duration-slow: 0.01ms;
+  }
+
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -67,7 +67,7 @@ function DiffViewContent(props: {
         ref={props.scrollRef}
         className={cn(
           scrollable ? "overflow-auto" : "overflow-hidden",
-          "rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95 p-4",
+          "rounded-lg border border-[#183039]/10 bg-[#fafcfb]/95 p-3",
           props.className
         )}
       >
@@ -87,7 +87,7 @@ function DiffViewContent(props: {
       ref={props.scrollRef}
       className={cn(
         scrollable ? "overflow-auto" : "overflow-hidden",
-        "rounded-[22px] border border-[#183039]/10 bg-[#fafcfb]/95",
+        "rounded-lg border border-[#183039]/10 bg-[#fafcfb]/95",
         props.className
       )}
     >
@@ -195,7 +195,7 @@ function UnifiedDiffBlockView(props: {
     <div
       data-after-line={block.afterLineNumber ?? undefined}
       className={cn(
-        "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-[10px] px-1 py-0 font-mono text-[13px] leading-[1.65]",
+        "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-lg px-1 py-0 font-mono text-[13px] leading-[1.65]",
         isHighlighted && "bg-[#d8a21b]/20",
         block.type === "added" && "bg-[#1d8c68]/10",
         block.type === "removed" && "bg-[#c94a35]/10"

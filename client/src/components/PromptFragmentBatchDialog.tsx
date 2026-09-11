@@ -122,9 +122,9 @@ export function PromptFragmentBatchDialog(props: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden overscroll-contain bg-[#10262b]/45 px-4 py-4">
-      <div className="mx-auto max-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-[0_28px_90px_rgba(16,38,43,0.3)]">
-        <div className="grid max-h-[calc(100vh-2rem)] gap-4 overflow-y-auto overscroll-contain p-4">
+    <div className="fixed inset-0 z-[100] overflow-hidden overscroll-contain bg-[#10262b]/45 p-3">
+      <div className="mx-auto max-h-[calc(100vh-1.5rem)] w-full max-w-6xl overflow-hidden rounded-lg bg-white shadow-[0_28px_90px_rgba(16,38,43,0.3)]">
+        <div className="grid max-h-[calc(100vh-1.5rem)] gap-3 overflow-y-auto overscroll-contain p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="m-0 text-xl">批量替换提示词片段</h2>
@@ -134,12 +134,12 @@ export function PromptFragmentBatchDialog(props: {
           <button className={secondaryButtonClass} onClick={props.onClose} type="button">关闭</button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <fieldset className="rounded-[20px] border border-[#183039]/10 p-3">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <fieldset className="rounded-lg border border-[#183039]/10 p-3">
             <legend className="px-2 text-sm font-semibold text-[#223841]">目标环境</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {targets.map((environment) => (
-                <label className="flex items-center gap-2 rounded-xl bg-[#f3f7f5] px-3 py-2.5 text-sm" key={environment.id}>
+                <label className="flex items-center gap-2 rounded-lg bg-[#f3f7f5] px-3 py-2 text-sm" key={environment.id}>
                   <input
                     checked={environmentIds.includes(environment.id)}
                     onChange={() => toggleEnvironment(environment.id)}
@@ -183,7 +183,7 @@ export function PromptFragmentBatchDialog(props: {
 
         {preview ? (
           <>
-            <div className="flex flex-wrap gap-1 rounded-2xl bg-[#eef4f2] p-1.5">
+            <div className="flex flex-wrap gap-1 rounded-lg bg-[#eef4f2] p-1">
               {[
                 ["all", "路径匹配", preview.matchedCount],
                 ["changed", "可替换", preview.changedCount],
@@ -194,7 +194,7 @@ export function PromptFragmentBatchDialog(props: {
                 <button
                   aria-pressed={activeFilter === filter}
                   className={cn(
-                    "inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition",
+                    "inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
                     activeFilter === filter
                       ? "bg-[#0e6b72] text-white shadow-sm"
                       : "text-[#53676e] hover:bg-white/80 hover:text-[#183039]"
@@ -210,7 +210,7 @@ export function PromptFragmentBatchDialog(props: {
             </div>
 
             {preview.errorCount ? (
-              <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-4 py-3 text-sm text-[#8d3322]">
+              <div className="rounded-lg border border-[#c94a35]/20 bg-[#c94a35]/10 px-3 py-2 text-sm text-[#8d3322]">
                 存在 XML 标签异常。必须先修复所有异常文件，再重新生成预览。
               </div>
             ) : null}
@@ -224,7 +224,7 @@ export function PromptFragmentBatchDialog(props: {
                 const selectable = item.status === "changed";
                 return (
                   <details
-                    className="rounded-[20px] border border-[#183039]/10 bg-[#fafcfb] p-2.5"
+                    className="rounded-lg border border-[#183039]/10 bg-[#fafcfb] p-2.5"
                     key={item.path}
                     onToggle={(event) => {
                       const isOpen = event.currentTarget.open;
@@ -272,7 +272,7 @@ export function PromptFragmentBatchDialog(props: {
                         />
                       </Suspense>
                     ) : item.beforeContent !== undefined ? (
-                      <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
+                      <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
                     ) : null}
                   </details>
                 );

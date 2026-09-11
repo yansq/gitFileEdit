@@ -22,7 +22,6 @@ const mergeEditorTheme = EditorView.theme({
     fontSize: "13px",
     lineHeight: "1.65",
     overflow: "visible",
-    overscrollBehavior: "none",
     scrollPaddingBottom: "64px"
   },
   ".cm-content": { minHeight: "100%", padding: "0 16px 64px 12px", caretColor: "transparent" },
@@ -82,9 +81,6 @@ export function MergeConfigEditor(props: {
         extensions: [
           lineNumbers(),
           mergeEditorTheme,
-          validationCompartmentRef.current.of(
-            EditorView.decorations.of(validationDecorations(props.validationIssue))
-          ),
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
           EditorView.lineWrapping
@@ -105,6 +101,9 @@ export function MergeConfigEditor(props: {
             EditorState.readOnly.of(props.disabled),
             EditorView.editable.of(!props.disabled)
           ]),
+          validationCompartmentRef.current.of(
+            EditorView.decorations.of(validationDecorations(props.validationIssue))
+          ),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update: ViewUpdate) => {
             if (!update.docChanged || applyingExternalValueRef.current) return;

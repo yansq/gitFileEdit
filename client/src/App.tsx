@@ -1,23 +1,20 @@
 import { EditorSelection } from "@codemirror/state";
 import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
 import type { EditorView } from "@codemirror/view";
-import {
-  parse as parseJson,
-  printParseErrorCode,
-  type ParseError
-} from "jsonc-parser";
+import { parse as parseJson, printParseErrorCode, type ParseError } from "jsonc-parser";
 import {
   startTransition,
   lazy,
   Suspense,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type CSSProperties,
   type ComponentProps,
   type FormEvent,
-  type PointerEvent as ReactPointerEvent
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { parseDocument } from "yaml";
 import { AuthScreen } from "./components/AuthScreen";
@@ -27,11 +24,8 @@ import { FileTree } from "./components/FileTree";
 import { PromptFragmentBatchDialog } from "./components/PromptFragmentBatchDialog";
 import { PromptFragmentFileDialog } from "./components/PromptFragmentFileDialog";
 import { ToastStack } from "./components/ToastStack";
-import {
-  buildFileTree,
-  getPathWithinRoot,
-  replaceEnvironmentRoot
-} from "./lib/filePaths";
+import { Badge, Button, IconButton, SegmentedControl } from "./components/ui";
+import { buildFileTree, getPathWithinRoot, replaceEnvironmentRoot } from "./lib/filePaths";
 import { formatTime, formatXml, getCommitSubject } from "./lib/format";
 import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
 import {
@@ -41,10 +35,10 @@ import {
   formLabelClass,
   formRowClass,
   inputClass,
-  panelClass,
   panelTitleRowClass,
   primaryButtonClass,
-  secondaryButtonClass
+  secondaryButtonClass,
+  workspaceWindowClass,
 } from "./lib/ui";
 import type {
   AuthUser,
@@ -56,7 +50,7 @@ import type {
   FileConflictPayload,
   FileDetail,
   RepoEnvironmentOption,
-  RepoFileSummary
+  RepoFileSummary,
 } from "./types";
 
 interface AuthResponse {
@@ -79,23 +73,202 @@ interface PendingReplay {
   patch: string;
 }
 
+type MainView = "environment-settings" | "review" | "workspace";
+type HeaderPopover = "account" | "repository" | null;
+type ActiveDialog =
+  | { type: "activation" }
+  | { type: "commit" }
+  | { type: "fragment-batch" }
+  | { type: "fragment-file"; mode: "create" | "rename" }
+  | null;
+
+interface EditorSearchState {
+  open: boolean;
+  input: string;
+  query: string;
+  index: number;
+}
+
+type EditorSearchAction =
+  | { type: "close" }
+  | { type: "inputChanged"; value: string }
+  | { type: "open" }
+  | { type: "searched"; query: string; index: number };
+
+const initialEditorSearchState: EditorSearchState = {
+  open: false,
+  input: "",
+  query: "",
+  index: -1,
+};
+
+function editorSearchReducer(
+  state: EditorSearchState,
+  action: EditorSearchAction,
+): EditorSearchState {
+  switch (action.type) {
+    case "open":
+      return state.open ? state : { ...state, open: true };
+    case "close":
+      return state.open ? { ...state, open: false } : state;
+    case "inputChanged":
+      return { ...state, input: action.value };
+    case "searched":
+      return { ...state, query: action.query, index: action.index };
+  }
+}
+
+interface HistoryState {
+  selectedHash: string;
+  detail: CommitSnapshot | null;
+  status: "idle" | "loading" | "ready";
+}
+
+type HistoryAction =
+  | { type: "clearDetail" }
+  | { type: "loadFailed" }
+  | { type: "loadStarted" }
+  | { type: "loadSucceeded"; detail: CommitSnapshot }
+  | { type: "reset" }
+  | { type: "select"; hash: string };
+
+const initialHistoryState: HistoryState = {
+  selectedHash: "",
+  detail: null,
+  status: "idle",
+};
+
+function historyReducer(state: HistoryState, action: HistoryAction): HistoryState {
+  switch (action.type) {
+    case "reset":
+      return initialHistoryState;
+    case "select":
+      return action.hash === state.selectedHash
+        ? state
+        : { selectedHash: action.hash, detail: null, status: "idle" };
+    case "clearDetail":
+      return state.detail || state.status !== "idle"
+        ? { ...state, detail: null, status: "idle" }
+        : state;
+    case "loadStarted":
+      return { ...state, detail: null, status: "loading" };
+    case "loadSucceeded":
+      return { ...state, detail: action.detail, status: "ready" };
+    case "loadFailed":
+      return { ...state, detail: null, status: "idle" };
+  }
+}
+
+interface ReviewState {
+  since: string;
+  until: string;
+  loading: boolean;
+  commits: EnvironmentReviewCommit[];
+  selectedHash: string;
+  selectedPath: string;
+  diff: EnvironmentReviewDiff | null;
+  diffLoading: boolean;
+}
+
+type ReviewAction =
+  | { type: "clearResults" }
+  | { type: "diffFailed" }
+  | { type: "diffStarted"; hash: string; path: string }
+  | { type: "diffSucceeded"; diff: EnvironmentReviewDiff }
+  | { type: "queryFailed" }
+  | { type: "queryStarted" }
+  | { type: "querySucceeded"; commits: EnvironmentReviewCommit[] }
+  | { type: "selectCommit"; hash: string }
+  | { type: "setSince"; value: string }
+  | { type: "setUntil"; value: string };
+
+function createInitialReviewState(): ReviewState {
+  return {
+    since: toDateInputValue(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)),
+    until: toDateInputValue(new Date()),
+    loading: false,
+    commits: [],
+    selectedHash: "",
+    selectedPath: "",
+    diff: null,
+    diffLoading: false,
+  };
+}
+
+function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
+  switch (action.type) {
+    case "setSince":
+      return { ...state, since: action.value };
+    case "setUntil":
+      return { ...state, until: action.value };
+    case "clearResults":
+      return {
+        ...state,
+        loading: false,
+        commits: [],
+        selectedHash: "",
+        selectedPath: "",
+        diff: null,
+        diffLoading: false,
+      };
+    case "queryStarted":
+      return { ...state, loading: true };
+    case "querySucceeded":
+      return { ...state, loading: false, commits: action.commits };
+    case "queryFailed":
+      return { ...state, loading: false };
+    case "selectCommit":
+      return {
+        ...state,
+        selectedHash: action.hash,
+        selectedPath: "",
+        diff: null,
+        diffLoading: false,
+      };
+    case "diffStarted":
+      return {
+        ...state,
+        selectedHash: action.hash,
+        selectedPath: action.path,
+        diff: null,
+        diffLoading: true,
+      };
+    case "diffSucceeded":
+      return { ...state, diff: action.diff, diffLoading: false };
+    case "diffFailed":
+      return { ...state, diffLoading: false };
+  }
+}
+
 const fileListMinWidth = 260;
 const fileListDefaultWidth = 320;
 const fileListMaxWidth = 560;
 const mainContentMinWidth = 520;
+const searchFieldShellClass =
+  "flex min-h-9 min-w-0 items-center gap-ui-2 rounded-ui-md border border-ui-border bg-surface px-ui-3 shadow-ui-xs transition-[border-color,box-shadow] duration-ui-normal focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 motion-reduce:transition-none";
+const searchFieldInputClass =
+  "h-8 min-w-0 flex-1 border-0 bg-transparent p-0 text-sm font-normal text-foreground outline-none placeholder:text-subtle-foreground";
+const searchShortcutClass =
+  "shrink-0 rounded-ui-xs border border-ui-border bg-surface-subtle px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-subtle-foreground";
+const shortcutModifier =
+  typeof navigator !== "undefined" && navigator.platform.toLocaleLowerCase().includes("mac")
+    ? "⌘"
+    : "Ctrl";
 const ConfigEditor = lazy(async () => ({
-  default: (await import("./components/ConfigEditor")).ConfigEditor
+  default: (await import("./components/ConfigEditor")).ConfigEditor,
 }));
 const DiffView = lazy(async () => ({
-  default: (await import("./components/DiffView")).DiffView
+  default: (await import("./components/DiffView")).DiffView,
 }));
 const MergeConfigEditor = lazy(async () => ({
-  default: (await import("./components/MergeConfigEditor")).MergeConfigEditor
+  default: (await import("./components/MergeConfigEditor")).MergeConfigEditor,
 }));
 
 function LazyDiffView(props: ComponentProps<typeof DiffView>): JSX.Element {
   return (
-    <Suspense fallback={<div className={cn(emptyBlockClass, props.className)}>正在加载差异预览...</div>}>
+    <Suspense
+      fallback={<div className={cn(emptyBlockClass, props.className)}>正在加载差异预览...</div>}
+    >
       <DiffView {...props} />
     </Suspense>
   );
@@ -111,9 +284,29 @@ function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Eleme
 
 function LazyMergeConfigEditor(props: ComponentProps<typeof MergeConfigEditor>): JSX.Element {
   return (
-    <Suspense fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载差异编辑器...</div>}>
+    <Suspense
+      fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载差异编辑器...</div>}
+    >
       <MergeConfigEditor {...props} />
     </Suspense>
+  );
+}
+
+function SearchIcon(): JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0 text-subtle-foreground"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4 4" />
+    </svg>
   );
 }
 
@@ -121,7 +314,7 @@ class ApiRequestError extends Error {
   constructor(
     message: string,
     public status: number,
-    public payload: unknown
+    public payload: unknown,
   ) {
     super(message);
   }
@@ -130,9 +323,9 @@ class ApiRequestError extends Error {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    ...init
+    ...init,
   });
 
   if (!response.ok) {
@@ -169,13 +362,16 @@ function createEnvironmentId(label: string, index: number): string {
   return normalized || `env-${index + 1}`;
 }
 
-function createBlankEnvironment(index: number, fallback?: RepoEnvironmentOption): RepoEnvironmentOption {
+function createBlankEnvironment(
+  index: number,
+  fallback?: RepoEnvironmentOption,
+): RepoEnvironmentOption {
   return {
     id: `env-${Date.now()}-${index + 1}`,
     label: "",
     root: fallback?.root ?? "",
     requiresAdminToEdit: false,
-    kind: "config"
+    kind: "config",
   };
 }
 
@@ -184,7 +380,7 @@ function isFileConflictPayload(value: unknown): value is FileConflictPayload {
     value &&
     typeof value === "object" &&
     (value as { type?: unknown }).type === "conflict" &&
-    typeof (value as { path?: unknown }).path === "string"
+    typeof (value as { path?: unknown }).path === "string",
   );
 }
 
@@ -193,7 +389,7 @@ function isFileValidationPayload(value: unknown): value is FileValidationPayload
     value &&
     typeof value === "object" &&
     (value as { type?: unknown }).type === "file_validation" &&
-    typeof (value as { message?: unknown }).message === "string"
+    typeof (value as { message?: unknown }).message === "string",
   );
 }
 
@@ -237,7 +433,11 @@ function getPositionText(content: string, offset: number): string {
   return `第 ${lines.length} 行第 ${lines[lines.length - 1].length + 1} 列`;
 }
 
-function getOffsetFromLineColumn(content: string, lineNumber: number, columnNumber: number): number {
+function getOffsetFromLineColumn(
+  content: string,
+  lineNumber: number,
+  columnNumber: number,
+): number {
   let line = 1;
   let column = 1;
   for (let index = 0; index < content.length; index += 1) {
@@ -259,32 +459,35 @@ function createValidationIssue(
   content: string,
   from: number,
   length: number,
-  message: string
+  message: string,
 ): ConfigEditorValidationIssue | null {
   if (!content) {
     return null;
   }
 
-  const safeFrom = clampNumber(from, 0, Math.max(0, content.length - 1));
+  let safeFrom = clampNumber(from, 0, Math.max(0, content.length - 1));
+  while (safeFrom > 0 && /\s/.test(content[safeFrom] ?? "")) {
+    safeFrom -= 1;
+  }
   const safeTo = clampNumber(safeFrom + Math.max(1, length), safeFrom + 1, content.length);
   return {
     from: safeFrom,
     to: safeTo,
-    message
+    message,
   };
 }
 
 function getEditorValidationIssue(
   filePath: string,
   content: string,
-  forceYaml = false
+  forceYaml = false,
 ): ConfigEditorValidationIssue | null {
   const extension = forceYaml ? "yaml" : filePath.split(".").pop()?.toLocaleLowerCase();
   if (extension === "json") {
     const errors: ParseError[] = [];
     parseJson(content, errors, {
       allowTrailingComma: false,
-      disallowComments: true
+      disallowComments: true,
     });
     const firstError = errors[0];
     if (!firstError) {
@@ -295,30 +498,29 @@ function getEditorValidationIssue(
       content,
       firstError.offset,
       firstError.length,
-      `${filePath} JSON 格式错误：${getPositionText(content, firstError.offset)}，${printParseErrorCode(firstError.error)}`
+      `${filePath} JSON 格式错误：${getPositionText(content, firstError.offset)}，${printParseErrorCode(firstError.error)}`,
     );
   }
 
   if (extension === "yaml" || extension === "yml") {
     const document = parseDocument(content, {
       prettyErrors: false,
-      strict: true
+      strict: true,
     });
     const firstError = document.errors[0];
     if (!firstError) {
       return null;
     }
 
-    const from =
-      firstError.linePos?.[0]
-        ? getOffsetFromLineColumn(content, firstError.linePos[0].line, firstError.linePos[0].col)
-        : firstError.pos[0];
+    const from = firstError.linePos?.[0]
+      ? getOffsetFromLineColumn(content, firstError.linePos[0].line, firstError.linePos[0].col)
+      : firstError.pos[0];
     const length = Math.max(1, firstError.pos[1] - firstError.pos[0]);
     return createValidationIssue(
       content,
       from,
       length,
-      `${filePath} YAML 格式错误：${getPositionText(content, from)}，${firstError.message}`
+      `${filePath} YAML 格式错误：${getPositionText(content, from)}，${firstError.message}`,
     );
   }
 
@@ -328,6 +530,9 @@ function getEditorValidationIssue(
 export default function App(): JSX.Element {
   const editorSurfaceRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+  const editorSearchInputRef = useRef<HTMLInputElement>(null);
+  const fileSearchInputRef = useRef<HTMLInputElement>(null);
+  const historyDetailCacheRef = useRef(new Map<string, CommitSnapshot>());
   const layoutRef = useRef<HTMLDivElement>(null);
   const reviewRequestIdRef = useRef(0);
   const reviewDiffRequestIdRef = useRef(0);
@@ -337,28 +542,29 @@ export default function App(): JSX.Element {
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [fileDetail, setFileDetail] = useState<FileDetail | null>(null);
   const [editorContent, setEditorContent] = useState("");
+  const [editorValidationIssue, setEditorValidationIssue] =
+    useState<ConfigEditorValidationIssue | null>(null);
   const [editorViewMode, setEditorViewMode] = useState<"diff" | "editor">("editor");
+  const [activeWorkspaceSection, setActiveWorkspaceSection] = useState<"editor" | "history">(
+    "editor",
+  );
+  const [editorSearchState, dispatchEditorSearch] = useReducer(
+    editorSearchReducer,
+    initialEditorSearchState,
+  );
   const [editorDirty, setEditorDirty] = useState(false);
-  const [editorSearchInput, setEditorSearchInput] = useState("");
-  const [editorSearch, setEditorSearch] = useState("");
-  const [editorSearchIndex, setEditorSearchIndex] = useState(-1);
   const [fileConflict, setFileConflict] = useState<FileConflictPayload | null>(null);
   const [fileValidationError, setFileValidationError] = useState<string | null>(null);
   const [gitForm, setGitForm] = useState({
-    extraMessage: ""
+    extraMessage: "",
   });
-  const [settingsSeeded, setSettingsSeeded] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [discarding, setDiscarding] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const [confirmingCommit, setConfirmingCommit] = useState(false);
-  const [selectedHistoryHash, setSelectedHistoryHash] = useState<string>("");
-  const [selectedHistoryDetail, setSelectedHistoryDetail] = useState<CommitSnapshot | null>(null);
-  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+  const [historyState, dispatchHistory] = useReducer(historyReducer, initialHistoryState);
   const [restoringHash, setRestoringHash] = useState<string | null>(null);
   const [pendingReplay, setPendingReplay] = useState<PendingReplay | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [showRepoDetails, setShowRepoDetails] = useState(false);
+  const [openHeaderPopover, setOpenHeaderPopover] = useState<HeaderPopover>(null);
   const [fileListWidth, setFileListWidth] = useState(fileListDefaultWidth);
   const [resizingFileList, setResizingFileList] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -369,31 +575,55 @@ export default function App(): JSX.Element {
   const [loginForm, setLoginForm] = useState({
     username: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
   });
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [loggingIn, setLoggingIn] = useState(false);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [activationDialogOpen, setActivationDialogOpen] = useState(false);
   const [activationCode, setActivationCode] = useState("");
   const [activatingAdmin, setActivatingAdmin] = useState(false);
-  const [showEnvironmentSettings, setShowEnvironmentSettings] = useState(false);
+  const [mainView, setMainView] = useState<MainView>("workspace");
   const [environmentDraft, setEnvironmentDraft] = useState<RepoEnvironmentOption[]>([]);
   const [savingEnvironmentSettings, setSavingEnvironmentSettings] = useState(false);
-  const [fragmentFileDialogMode, setFragmentFileDialogMode] = useState<"create" | "rename" | null>(null);
-  const [fragmentBatchOpen, setFragmentBatchOpen] = useState(false);
+  const [activeDialog, setActiveDialog] = useState<ActiveDialog>(null);
   const [fragmentFileOperation, setFragmentFileOperation] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewSince, setReviewSince] = useState(() =>
-    toDateInputValue(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000))
+  const [reviewState, dispatchReview] = useReducer(
+    reviewReducer,
+    undefined,
+    createInitialReviewState,
   );
-  const [reviewUntil, setReviewUntil] = useState(() => toDateInputValue(new Date()));
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewCommits, setReviewCommits] = useState<EnvironmentReviewCommit[]>([]);
-  const [selectedReviewHash, setSelectedReviewHash] = useState("");
-  const [selectedReviewPath, setSelectedReviewPath] = useState("");
-  const [reviewDiff, setReviewDiff] = useState<EnvironmentReviewDiff | null>(null);
-  const [reviewDiffLoading, setReviewDiffLoading] = useState(false);
+
+  const {
+    index: editorSearchIndex,
+    input: editorSearchInput,
+    open: editorSearchOpen,
+    query: editorSearch,
+  } = editorSearchState;
+  const {
+    detail: selectedHistoryDetail,
+    selectedHash: selectedHistoryHash,
+    status: historyDetailStatus,
+  } = historyState;
+  const historyDetailLoading = historyDetailStatus === "loading";
+  const {
+    commits: reviewCommits,
+    diff: reviewDiff,
+    diffLoading: reviewDiffLoading,
+    loading: reviewLoading,
+    selectedHash: selectedReviewHash,
+    selectedPath: selectedReviewPath,
+    since: reviewSince,
+    until: reviewUntil,
+  } = reviewState;
+
+  const accountMenuOpen = openHeaderPopover === "account";
+  const showRepoDetails = openHeaderPopover === "repository";
+  const showEnvironmentSettings = mainView === "environment-settings";
+  const reviewOpen = mainView === "review";
+  const confirmingCommit = activeDialog?.type === "commit";
+  const activationDialogOpen = activeDialog?.type === "activation";
+  const fragmentBatchOpen = activeDialog?.type === "fragment-batch";
+  const fragmentFileDialogMode =
+    activeDialog?.type === "fragment-file" ? activeDialog.mode : null;
 
   function resetAuthenticatedState(): void {
     setAuthUser(null);
@@ -405,21 +635,15 @@ export default function App(): JSX.Element {
     setFileConflict(null);
     setFileValidationError(null);
     setPendingReplay(null);
-    setReviewOpen(false);
-    setReviewCommits([]);
-    setSelectedReviewHash("");
-    setSelectedReviewPath("");
-    setReviewDiff(null);
-    setSelectedHistoryDetail(null);
-    setHistoryDetailLoading(false);
+    setMainView("workspace");
+    dispatchReview({ type: "clearResults" });
+    dispatchHistory({ type: "reset" });
+    historyDetailCacheRef.current.clear();
     setLiveNotice(null);
-    setAccountMenuOpen(false);
-    setActivationDialogOpen(false);
+    setOpenHeaderPopover(null);
+    setActiveDialog(null);
     setActivationCode("");
-    setShowEnvironmentSettings(false);
     setEnvironmentDraft([]);
-    setFragmentFileDialogMode(null);
-    setFragmentBatchOpen(false);
   }
 
   function handleAuthRequired(errorValue: unknown): boolean {
@@ -437,7 +661,6 @@ export default function App(): JSX.Element {
   function getLatestEditorContent(): string {
     return editorViewRef.current?.state.doc.toString() ?? editorContent;
   }
-
 
   function startFileListResize(event: ReactPointerEvent<HTMLButtonElement>): void {
     if (window.matchMedia("(max-width: 960px)").matches) {
@@ -466,18 +689,16 @@ export default function App(): JSX.Element {
       setSelectedEnvironment((current) =>
         current && environmentOptions.some((item) => item.id === current)
           ? current
-          : derivedEnvironment
+          : derivedEnvironment,
       );
       if (nextPath !== selectedPath) {
-        setSelectedHistoryHash("");
-        setSelectedHistoryDetail(null);
+        dispatchHistory({ type: "reset" });
       }
       setSelectedPath(nextPath);
-      if (!settingsSeeded || !preserveForm) {
+      if (!preserveForm) {
         setGitForm({
-          extraMessage: ""
+          extraMessage: "",
         });
-        setSettingsSeeded(true);
       }
     });
   }
@@ -494,9 +715,7 @@ export default function App(): JSX.Element {
       return;
     }
 
-    const detail = await requestJson<FileDetail>(
-      `/api/file?path=${encodeURIComponent(pathValue)}`
-    );
+    const detail = await requestJson<FileDetail>(`/api/file?path=${encodeURIComponent(pathValue)}`);
 
     startTransition(() => {
       setFileDetail(detail);
@@ -509,10 +728,13 @@ export default function App(): JSX.Element {
     });
   }
 
+  const fileHistory = fileDetail?.history ?? [];
+  const selectedHistory: CommitSummary | null =
+    fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
+
   useEffect(() => {
     void (async () => {
       try {
-        setLoading(true);
         const authResponse = await fetch("/api/auth/me");
         if (!authResponse.ok) {
           resetAuthenticatedState();
@@ -526,7 +748,6 @@ export default function App(): JSX.Element {
         setError((fetchError as Error).message);
       } finally {
         setAuthChecked(true);
-        setLoading(false);
       }
     })();
   }, []);
@@ -541,52 +762,65 @@ export default function App(): JSX.Element {
   }, [selectedPath]);
 
   useEffect(() => {
-    const history = fileDetail?.history ?? [];
-    if (!history.length) {
-      setSelectedHistoryHash("");
+    const effectiveHistoryHash = selectedHistory?.hash ?? "";
+    if (
+      activeWorkspaceSection !== "history" ||
+      reviewOpen ||
+      !selectedPath ||
+      !effectiveHistoryHash
+    ) {
+      dispatchHistory({ type: "clearDetail" });
       return;
     }
 
-    setSelectedHistoryHash((current) =>
-      current && history.some((item) => item.hash === current)
-        ? current
-        : history[0].hash
-    );
-  }, [fileDetail?.path, fileDetail?.history]);
-
-  useEffect(() => {
-    if (!selectedPath || !selectedHistoryHash) {
-      setSelectedHistoryDetail(null);
-      setHistoryDetailLoading(false);
+    const cacheKey = `${selectedPath}\u0000${effectiveHistoryHash}`;
+    const cachedDetail = historyDetailCacheRef.current.get(cacheKey);
+    if (cachedDetail) {
+      dispatchHistory({ type: "loadSucceeded", detail: cachedDetail });
       return;
     }
 
     let cancelled = false;
-    setSelectedHistoryDetail(null);
-    setHistoryDetailLoading(true);
+    dispatchHistory({ type: "loadStarted" });
     void requestJson<CommitSnapshot>(
-      `/api/file/history?path=${encodeURIComponent(selectedPath)}&hash=${encodeURIComponent(selectedHistoryHash)}`
+      `/api/file/history?path=${encodeURIComponent(selectedPath)}&hash=${encodeURIComponent(effectiveHistoryHash)}`,
     )
       .then((detail) => {
         if (!cancelled) {
-          setSelectedHistoryDetail(detail);
+          historyDetailCacheRef.current.set(cacheKey, detail);
+          if (historyDetailCacheRef.current.size > 50) {
+            const oldestKey = historyDetailCacheRef.current.keys().next().value;
+            if (oldestKey) historyDetailCacheRef.current.delete(oldestKey);
+          }
+          dispatchHistory({ type: "loadSucceeded", detail });
         }
       })
       .catch((fetchError) => {
         if (!cancelled && !handleAuthRequired(fetchError)) {
+          dispatchHistory({ type: "loadFailed" });
           setError((fetchError as Error).message);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setHistoryDetailLoading(false);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [selectedPath, selectedHistoryHash]);
+  }, [activeWorkspaceSection, reviewOpen, selectedHistory?.hash, selectedPath]);
+
+  useEffect(() => {
+    if (activeWorkspaceSection !== "editor" || reviewOpen || !selectedPath) {
+      setEditorValidationIssue(null);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setEditorValidationIssue(getEditorValidationIssue(selectedPath, editorContent));
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeWorkspaceSection, editorContent, reviewOpen, selectedPath]);
 
   useEffect(() => {
     if (!authUser) {
@@ -619,7 +853,7 @@ export default function App(): JSX.Element {
     return () => {
       stream.close();
     };
-  }, [authUser, selectedPath, editorDirty, settingsSeeded]);
+  }, [authUser, selectedPath, editorDirty]);
 
   useEffect(() => {
     if (!authUser || !message) {
@@ -682,11 +916,9 @@ export default function App(): JSX.Element {
       const rect = layoutElement.getBoundingClientRect();
       const maxWidth = Math.max(
         fileListMinWidth,
-        Math.min(fileListMaxWidth, rect.width - mainContentMinWidth - 22)
+        Math.min(fileListMaxWidth, rect.width - mainContentMinWidth - 22),
       );
-      setFileListWidth(
-        clampNumber(event.clientX - rect.left, fileListMinWidth, maxWidth)
-      );
+      setFileListWidth(clampNumber(event.clientX - rect.left, fileListMinWidth, maxWidth));
     }
 
     function stopResizing(): void {
@@ -735,8 +967,8 @@ export default function App(): JSX.Element {
       const detail = await requestJson<FileDetail>("/api/file/discard", {
         method: "POST",
         body: JSON.stringify({
-          path: selectedPath
-        })
+          path: selectedPath,
+        }),
       });
 
       startTransition(() => {
@@ -744,7 +976,7 @@ export default function App(): JSX.Element {
         setEditorContent(detail.content);
         setEditorDirty(false);
       });
-      setSelectedHistoryHash(detail.history[0]?.hash ?? "");
+      dispatchHistory({ type: "select", hash: detail.history[0]?.hash ?? "" });
       setMessage("已丢弃当前文件的未提交修改");
       await refreshBootstrap(selectedPath);
     } catch (discardError) {
@@ -762,12 +994,12 @@ export default function App(): JSX.Element {
       return;
     }
     if (isProtectedFileReadOnly) {
-      setConfirmingCommit(false);
+      setActiveDialog(null);
       setError("普通用户在当前环境仅可查看文件与历史记录");
       return;
     }
 
-    setConfirmingCommit(false);
+    setActiveDialog(null);
     setCommitting(true);
     setError(null);
     setMessage(null);
@@ -786,8 +1018,8 @@ export default function App(): JSX.Element {
           content: latestContent,
           baseHead: fileDetail.baseHead,
           baseBlob: fileDetail.baseBlob,
-          message: gitForm.extraMessage
-        })
+          message: gitForm.extraMessage,
+        }),
       });
 
       setFileConflict(null);
@@ -795,7 +1027,7 @@ export default function App(): JSX.Element {
       await refreshFile(selectedPath, false);
       setGitForm((current) => ({
         ...current,
-        extraMessage: ""
+        extraMessage: "",
       }));
       setMessage("修改已提交并推送到远程仓库");
     } catch (commitError) {
@@ -815,9 +1047,9 @@ export default function App(): JSX.Element {
               remoteHead: conflictPayload.remoteHead,
               remoteBlob: conflictPayload.remoteBlob,
               remoteContent: conflictPayload.remoteContent,
-              headContent: conflictPayload.remoteContent
+              headContent: conflictPayload.remoteContent,
             }
-            : current
+            : current,
         );
         setEditorDirty(true);
       } else if (handleAuthRequired(commitError)) {
@@ -851,7 +1083,7 @@ export default function App(): JSX.Element {
     setPendingReplay({
       hash: commit.hash,
       sourcePath: selectedPath,
-      patch: createReplayPatch(selectedPath, commit.beforeContent, commit.afterContent)
+      patch: createReplayPatch(selectedPath, commit.beforeContent, commit.afterContent),
     });
     setError(null);
     setMessage(`已提取 ${commit.hash.slice(0, 8)} 的修改，可在任意文件中尝试重放`);
@@ -907,8 +1139,8 @@ export default function App(): JSX.Element {
           path: selectedPath,
           hash: commit.hash,
           baseHead: fileDetail.baseHead,
-          baseBlob: fileDetail.baseBlob
-        })
+          baseBlob: fileDetail.baseBlob,
+        }),
       });
 
       setFileConflict(null);
@@ -932,9 +1164,9 @@ export default function App(): JSX.Element {
               remoteHead: conflictPayload.remoteHead,
               remoteBlob: conflictPayload.remoteBlob,
               remoteContent: conflictPayload.remoteContent,
-              headContent: conflictPayload.remoteContent
+              headContent: conflictPayload.remoteContent,
             }
-            : current
+            : current,
         );
         setEditorDirty(true);
       } else if (handleAuthRequired(restoreError)) {
@@ -959,7 +1191,7 @@ export default function App(): JSX.Element {
 
     try {
       await requestJson<BootstrapResponse>("/api/repo/sync", {
-        method: "POST"
+        method: "POST",
       });
       await refreshBootstrap(selectedPath || undefined);
       if (selectedPath) {
@@ -984,23 +1216,23 @@ export default function App(): JSX.Element {
 
     const requestId = reviewRequestIdRef.current + 1;
     reviewRequestIdRef.current = requestId;
-    setReviewOpen(true);
-    setReviewLoading(true);
+    setMainView("review");
+    dispatchReview({ type: "queryStarted" });
     setError(null);
 
     try {
       const params = new URLSearchParams({
         environmentId,
         since: reviewSince,
-        until: reviewUntil
+        until: reviewUntil,
       });
       const payload = await requestJson<{ commits: EnvironmentReviewCommit[] }>(
-        `/api/review/changes?${params.toString()}`
+        `/api/review/changes?${params.toString()}`,
       );
       if (requestId !== reviewRequestIdRef.current) {
         return;
       }
-      setReviewCommits(payload.commits);
+      dispatchReview({ type: "querySucceeded", commits: payload.commits });
       const firstCommit = payload.commits[0] ?? null;
       selectReviewCommit(firstCommit, environmentId);
     } catch (reviewError) {
@@ -1010,56 +1242,50 @@ export default function App(): JSX.Element {
       if (handleAuthRequired(reviewError)) {
         return;
       }
+      dispatchReview({ type: "queryFailed" });
       setError((reviewError as Error).message);
-    } finally {
-      if (requestId === reviewRequestIdRef.current) {
-        setReviewLoading(false);
-      }
     }
   }
 
   function selectReviewCommit(
     commit: EnvironmentReviewCommit | null,
-    environmentId = activeEnvironment?.id
+    environmentId = activeEnvironment?.id,
   ): void {
-    setSelectedReviewHash(commit?.hash ?? "");
+    dispatchReview({ type: "selectCommit", hash: commit?.hash ?? "" });
     if (commit?.files.length === 1) {
       void loadReviewDiff(commit, commit.files[0].path, environmentId);
       return;
     }
     reviewDiffRequestIdRef.current += 1;
-    setSelectedReviewPath("");
-    setReviewDiff(null);
   }
 
   async function loadReviewDiff(
     commit: EnvironmentReviewCommit,
     filePath: string,
-    environmentId = activeEnvironment?.id
+    environmentId = activeEnvironment?.id,
   ): Promise<void> {
     if (!environmentId) {
       return;
     }
 
-    setSelectedReviewHash(commit.hash);
-    setSelectedReviewPath(filePath);
     const diffRequestId = reviewDiffRequestIdRef.current + 1;
     reviewDiffRequestIdRef.current = diffRequestId;
-    setReviewDiffLoading(true);
-    setReviewDiff(null);
+    dispatchReview({ type: "diffStarted", hash: commit.hash, path: filePath });
     setError(null);
 
     try {
       const params = new URLSearchParams({
         environmentId,
         hash: commit.hash,
-        path: filePath
+        path: filePath,
       });
-      const diff = await requestJson<EnvironmentReviewDiff>(`/api/review/diff?${params.toString()}`);
+      const diff = await requestJson<EnvironmentReviewDiff>(
+        `/api/review/diff?${params.toString()}`,
+      );
       if (diffRequestId !== reviewDiffRequestIdRef.current) {
         return;
       }
-      setReviewDiff(diff);
+      dispatchReview({ type: "diffSucceeded", diff });
     } catch (reviewError) {
       if (diffRequestId !== reviewDiffRequestIdRef.current) {
         return;
@@ -1067,11 +1293,8 @@ export default function App(): JSX.Element {
       if (handleAuthRequired(reviewError)) {
         return;
       }
+      dispatchReview({ type: "diffFailed" });
       setError((reviewError as Error).message);
-    } finally {
-      if (diffRequestId === reviewDiffRequestIdRef.current) {
-        setReviewDiffLoading(false);
-      }
     }
   }
 
@@ -1092,15 +1315,15 @@ export default function App(): JSX.Element {
           method: "POST",
           body: JSON.stringify({
             username: loginForm.username,
-            password: loginForm.password
-          })
-        }
+            password: loginForm.password,
+          }),
+        },
       );
       setAuthUser(payload.user);
       setLoginForm({
         username: "",
         password: "",
-        confirmPassword: ""
+        confirmPassword: "",
       });
       await refreshBootstrap(undefined, false);
     } catch (loginError) {
@@ -1116,7 +1339,7 @@ export default function App(): JSX.Element {
 
   async function logoutCurrentUser(): Promise<void> {
     await requestJson<{ ok: boolean }>("/api/auth/logout", {
-      method: "POST"
+      method: "POST",
     }).catch(() => ({ ok: true }));
     resetAuthenticatedState();
     setError(null);
@@ -1133,13 +1356,13 @@ export default function App(): JSX.Element {
       const payload = await requestJson<AuthResponse>("/api/auth/activate-admin", {
         method: "POST",
         body: JSON.stringify({
-          code: activationCode
-        })
+          code: activationCode,
+        }),
       });
       setAuthUser(payload.user);
       setActivationCode("");
-      setActivationDialogOpen(false);
-      setAccountMenuOpen(false);
+      setActiveDialog(null);
+      setOpenHeaderPopover(null);
       setMessage("已升级为管理员");
     } catch (activationError) {
       if (handleAuthRequired(activationError)) {
@@ -1162,7 +1385,7 @@ export default function App(): JSX.Element {
     try {
       const payload = await requestJson<EnvironmentSettingsResponse>("/api/settings/environments");
       setEnvironmentDraft(payload.environments);
-      setShowEnvironmentSettings(true);
+      setMainView("environment-settings");
     } catch (settingsError) {
       if (handleAuthRequired(settingsError)) {
         return;
@@ -1171,19 +1394,16 @@ export default function App(): JSX.Element {
     }
   }
 
-  function updateEnvironmentDraft(
-    index: number,
-    patch: Partial<RepoEnvironmentOption>
-  ): void {
+  function updateEnvironmentDraft(index: number, patch: Partial<RepoEnvironmentOption>): void {
     setEnvironmentDraft((current) =>
-      current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item))
+      current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
     );
   }
 
   function addEnvironmentDraft(): void {
     setEnvironmentDraft((current) => [
       ...current,
-      createBlankEnvironment(current.length, current[current.length - 1])
+      createBlankEnvironment(current.length, current[current.length - 1]),
     ]);
   }
 
@@ -1196,7 +1416,7 @@ export default function App(): JSX.Element {
       ...item,
       id: item.id.trim() || createEnvironmentId(item.label, index),
       label: item.label.trim(),
-      root: item.root.trim().replace(/^\/+|\/+$/g, "")
+      root: item.root.trim().replace(/^\/+|\/+$/g, ""),
     }));
     if (!normalized.length) {
       setError("至少需要保留一个环境配置");
@@ -1214,12 +1434,12 @@ export default function App(): JSX.Element {
       const payload = await requestJson<EnvironmentSettingsResponse>("/api/settings/environments", {
         method: "PUT",
         body: JSON.stringify({
-          environments: normalized
-        })
+          environments: normalized,
+        }),
       });
       setEnvironmentDraft(payload.environments);
       await refreshBootstrap(selectedPath || undefined);
-      setShowEnvironmentSettings(false);
+      setMainView("workspace");
       setMessage("环境配置已保存");
     } catch (settingsError) {
       if (handleAuthRequired(settingsError)) {
@@ -1236,7 +1456,7 @@ export default function App(): JSX.Element {
     tagName: string;
   }): Promise<void> {
     const environment = bootstrap?.config.environments.find(
-      (item) => item.id === selectedEnvironment && item.kind === "fragment-library"
+      (item) => item.id === selectedEnvironment && item.kind === "fragment-library",
     );
     if (!environment || !fragmentFileDialogMode) return;
 
@@ -1254,18 +1474,20 @@ export default function App(): JSX.Element {
               ? {
                 environmentId: environment.id,
                 relativePath: values.relativePath,
-                tagName: values.tagName
+                tagName: values.tagName,
               }
               : {
                 path: selectedPath,
-                relativePath: values.relativePath
-              }
-          )
-        }
+                relativePath: values.relativePath,
+              },
+          ),
+        },
       );
-      setFragmentFileDialogMode(null);
+      setActiveDialog(null);
       await refreshBootstrap(result.path);
-      setMessage(fragmentFileDialogMode === "create" ? "提示词片段已创建并提交" : "提示词片段已重命名并提交");
+      setMessage(
+        fragmentFileDialogMode === "create" ? "提示词片段已创建并提交" : "提示词片段已重命名并提交",
+      );
     } catch (operationError) {
       if (!handleAuthRequired(operationError)) setError((operationError as Error).message);
     } finally {
@@ -1280,7 +1502,7 @@ export default function App(): JSX.Element {
     try {
       await requestJson<{ head: string; path: string }>("/api/prompt-fragments/files", {
         method: "DELETE",
-        body: JSON.stringify({ path: pathValue })
+        body: JSON.stringify({ path: pathValue }),
       });
       await refreshBootstrap(undefined);
       setMessage("提示词片段已删除并推送");
@@ -1298,16 +1520,15 @@ export default function App(): JSX.Element {
   const isFragmentLibrary = activeEnvironment?.kind === "fragment-library";
   const selectedFragmentRelativePath =
     isFragmentLibrary && selectedPath && activeEnvironment
-      ? getPathWithinRoot(selectedPath, activeEnvironment.root) ?? ""
+      ? (getPathWithinRoot(selectedPath, activeEnvironment.root) ?? "")
       : "";
   const selectedFileEnvironment =
     environmentOptions.find(
-      (item) => selectedPath && getPathWithinRoot(selectedPath, item.root) !== null
+      (item) => selectedPath && getPathWithinRoot(selectedPath, item.root) !== null,
     ) ?? activeEnvironment;
-  const displayRoot =
-    activeEnvironment
-      ? activeEnvironment.root
-      : bootstrap?.config.visibleRoots?.join(" / ") || "-";
+  const displayRoot = activeEnvironment
+    ? activeEnvironment.root
+    : bootstrap?.config.visibleRoots?.join(" / ") || "-";
   const repoHead = bootstrap?.repoStatus.head ?? null;
   const remoteUrl = bootstrap?.config.remoteUrl || "-";
   const currentRoleLabel = authUser?.role === "admin" ? "管理员" : "普通用户";
@@ -1320,7 +1541,7 @@ export default function App(): JSX.Element {
       activeEnvironment
         ? files.filter((file) => getPathWithinRoot(file.path, activeEnvironment.root) !== null)
         : files,
-    [activeEnvironment, files]
+    [activeEnvironment, files],
   );
   const visibleFiles = environmentFiles;
   const normalizedFileQuery = fileQuery.trim().toLocaleLowerCase();
@@ -1332,7 +1553,7 @@ export default function App(): JSX.Element {
           return searchTarget.includes(normalizedFileQuery);
         })
         : visibleFiles,
-    [activeEnvironment, normalizedFileQuery, visibleFiles]
+    [activeEnvironment, normalizedFileQuery, visibleFiles],
   );
   const fileTree = useMemo(
     () =>
@@ -1340,51 +1561,80 @@ export default function App(): JSX.Element {
         ? buildFileTree(
           filteredVisibleFiles,
           (file) => getPathWithinRoot(file.path, activeEnvironment.root),
-          activeEnvironment.root
+          activeEnvironment.root,
         )
         : [],
-    [activeEnvironment, filteredVisibleFiles]
+    [activeEnvironment, filteredVisibleFiles],
   );
   const repoReady = bootstrap?.repoStatus.ready ?? false;
   const pendingBaseContent = fileDetail?.headContent ?? "";
   const hasPendingChanges =
-    Boolean(selectedPath) &&
-    (editorDirty || pendingBaseContent !== (fileDetail?.content ?? ""));
+    Boolean(selectedPath) && (editorDirty || pendingBaseContent !== (fileDetail?.content ?? ""));
   const canDiscardCurrentFile =
     Boolean(selectedPath) &&
     !isProtectedFileReadOnly &&
     !committing &&
     (editorDirty || Boolean(fileDetail?.isDirty));
-  const fileHistory = fileDetail?.history ?? [];
-  const selectedHistory: CommitSummary | null =
-    fileHistory.find((commit) => commit.hash === selectedHistoryHash) ?? fileHistory[0] ?? null;
   const editorSearchMatches = useMemo(
     () => findTextMatches(editorContent, editorSearch),
-    [editorContent, editorSearch]
+    [editorContent, editorSearch],
   );
-  const editorValidationIssue = useMemo(
-    () => selectedPath ? getEditorValidationIssue(selectedPath, editorContent) : null,
-    [editorContent, selectedPath]
-  );
+  const displayedEditorSearchIndex = editorSearchMatches.length
+    ? clampNumber(editorSearchIndex, 0, editorSearchMatches.length - 1)
+    : -1;
   const selectedReviewCommit =
     reviewCommits.find((commit) => commit.hash === selectedReviewHash) ?? reviewCommits[0] ?? null;
   const workspaceLayoutStyle = {
-    "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`
+    "--file-list-grid": `${fileListWidth}px minmax(0, 1fr)`,
   } as CSSProperties;
 
-  useEffect(() => {
-    setEditorSearchIndex((current) => {
-      if (!editorSearch || !editorSearchMatches.length) {
-        return -1;
-      }
-
-      if (current < 0) {
-        return 0;
-      }
-
-      return Math.min(current, editorSearchMatches.length - 1);
+  function focusEditorSearchInput(): void {
+    window.requestAnimationFrame(() => {
+      editorSearchInputRef.current?.focus();
+      editorSearchInputRef.current?.select();
     });
-  }, [editorSearch, editorSearchMatches.length]);
+  }
+
+  function openEditorSearch(): void {
+    dispatchEditorSearch({ type: "open" });
+    focusEditorSearchInput();
+  }
+
+  useEffect(() => {
+    function handleSearchShortcut(event: KeyboardEvent): void {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) {
+        return;
+      }
+
+      if (!authUser || mainView !== "workspace" || activeDialog !== null) {
+        return;
+      }
+
+      const key = event.key.toLocaleLowerCase();
+      if (key === "p") {
+        event.preventDefault();
+        event.stopPropagation();
+        fileSearchInputRef.current?.focus();
+        fileSearchInputRef.current?.select();
+        return;
+      }
+
+      if (key === "f" && activeWorkspaceSection === "editor" && selectedPath) {
+        event.preventDefault();
+        event.stopPropagation();
+        openEditorSearch();
+      }
+    }
+
+    window.addEventListener("keydown", handleSearchShortcut, true);
+    return () => window.removeEventListener("keydown", handleSearchShortcut, true);
+  }, [
+    activeDialog,
+    activeWorkspaceSection,
+    authUser,
+    mainView,
+    selectedPath,
+  ]);
 
   function scrollToEditorSearchMatch(match: { from: number; to: number }): void {
     const view = editorViewRef.current;
@@ -1396,11 +1646,11 @@ export default function App(): JSX.Element {
     const block = view.lineBlockAt(match.from);
     const maxScrollTop = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
     view.dispatch({
-      selection: EditorSelection.single(match.from, match.to)
+      selection: EditorSelection.single(match.from, match.to),
     });
     const nextScrollTop = Math.max(
       0,
-      Math.min(maxScrollTop, block.top - view.scrollDOM.clientHeight / 2 + block.height / 2)
+      Math.min(maxScrollTop, block.top - view.scrollDOM.clientHeight / 2 + block.height / 2),
     );
     view.scrollDOM.scrollTop = nextScrollTop;
   }
@@ -1418,22 +1668,20 @@ export default function App(): JSX.Element {
     const query = isNewSearch ? editorSearchInput : editorSearch;
     const matches = findTextMatches(currentContent, query);
 
-    if (isNewSearch) {
-      setEditorSearch(editorSearchInput);
-    }
-
     if (!matches.length) {
-      setEditorSearchIndex(-1);
+      dispatchEditorSearch({ type: "searched", query: editorSearchInput, index: -1 });
       return;
     }
 
-    const nextIndex = isNewSearch
-      ? direction < 0
-        ? matches.length - 1
-        : 0
-      : (Math.max(editorSearchIndex, 0) + direction + matches.length) % matches.length;
+    const currentIndex = clampNumber(editorSearchIndex, 0, matches.length - 1);
+    const nextIndex =
+      isNewSearch || editorSearchIndex < 0
+        ? direction < 0
+          ? matches.length - 1
+          : 0
+        : (currentIndex + direction + matches.length) % matches.length;
 
-    setEditorSearchIndex(nextIndex);
+    dispatchEditorSearch({ type: "searched", query: editorSearchInput, index: nextIndex });
     scrollToEditorSearchMatch(matches[nextIndex]);
   }
 
@@ -1444,7 +1692,7 @@ export default function App(): JSX.Element {
     }
     const moved = (direction > 0 ? goToNextChunk : goToPreviousChunk)({
       state: view.state,
-      dispatch: view.dispatch
+      dispatch: view.dispatch,
     });
     if (moved) {
       const lineEnd = view.state.doc.lineAt(view.state.selection.main.head).to;
@@ -1458,7 +1706,8 @@ export default function App(): JSX.Element {
       return;
     }
 
-    const validationError = getEditorValidationIssue(selectedPath, editorContent, true)?.message ?? null;
+    const validationError =
+      getEditorValidationIssue(selectedPath, editorContent, true)?.message ?? null;
     if (validationError) {
       setMessage(null);
       setError(validationError);
@@ -1485,7 +1734,7 @@ export default function App(): JSX.Element {
     }
   }
 
-  if (!authChecked || loading) {
+  if (!authChecked) {
     return <div className="p-7 text-[#43555d]">正在加载...</div>;
   }
 
@@ -1504,7 +1753,7 @@ export default function App(): JSX.Element {
           setLoginForm({
             username: "",
             password: "",
-            confirmPassword: ""
+            confirmPassword: "",
           });
         }}
       />
@@ -1512,27 +1761,24 @@ export default function App(): JSX.Element {
   }
 
   return (
-    <div
-      className={cn(
-        "min-h-screen p-4 sm:p-7",
-        isFragmentLibrary && "bg-[radial-gradient(circle_at_top_left,rgba(117,78,210,0.13),transparent_34%),linear-gradient(135deg,#fbfaff_0%,#f5f9fb_58%,#f1f8f5_100%)]"
-      )}
-    >
+    <div className="h-screen min-w-[1080px] overflow-hidden bg-canvas">
       <ToastStack message={message} liveNotice={liveNotice} error={error} />
       {confirmingCommit && !isProtectedFileReadOnly ? (
         <CommitConfirmDialog
           selectedPath={selectedPath}
           commitMessage={gitForm.extraMessage}
           committing={committing}
-          onCancel={() => setConfirmingCommit(false)}
+          onCancel={() => setActiveDialog(null)}
           onConfirm={() => void commitAndPush()}
         />
       ) : null}
       {fragmentFileDialogMode ? (
         <PromptFragmentFileDialog
           mode={fragmentFileDialogMode}
-          initialRelativePath={fragmentFileDialogMode === "rename" ? selectedFragmentRelativePath : ""}
-          onClose={() => setFragmentFileDialogMode(null)}
+          initialRelativePath={
+            fragmentFileDialogMode === "rename" ? selectedFragmentRelativePath : ""
+          }
+          onClose={() => setActiveDialog(null)}
           onSubmit={submitFragmentFileDialog}
         />
       ) : null}
@@ -1540,79 +1786,123 @@ export default function App(): JSX.Element {
         <PromptFragmentBatchDialog
           sourcePath={selectedPath}
           environments={environmentOptions.filter(
-            (item) => authUser?.role === "admin" || !item.requiresAdminToEdit
+            (item) => authUser?.role === "admin" || !item.requiresAdminToEdit,
           )}
-          onClose={() => setFragmentBatchOpen(false)}
+          onClose={() => setActiveDialog(null)}
           onError={(batchError) => setError(batchError)}
           onApplied={async (paths) => {
-            setFragmentBatchOpen(false);
+            setActiveDialog(null);
             await refreshBootstrap(selectedPath);
             setMessage(`已批量替换并提交 ${paths.length} 个文件`);
           }}
         />
       ) : null}
-      <header className="mb-6 flex flex-col items-start justify-between gap-6 xl:flex-row">
-        <div>
-          <p className={cn(
-            "mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]",
-            isFragmentLibrary && "text-[#7351c7]"
-          )}>
-            {isFragmentLibrary ? "Prompt Fragment Library" : "Git File Console"}
-          </p>
-          <h1 className="m-0 text-[clamp(32px,5vw,48px)] leading-[1.05]">
-            {isFragmentLibrary ? "提示词片段库" : "配置文件在线展示与提交"}
-          </h1>
-          <p className="mt-3.5 max-w-[760px] leading-relaxed text-[#43555d]">
-            {isFragmentLibrary
-              ? "集中管理可复用的 XML 提示词片段；提交片段后，可按环境和路径条件批量替换。"
-              : "按环境切换查看配置文件，支持实时刷新、在线修改、提交并推送。"}
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-[minmax(260px,1fr)_auto]">
-          <div className="flex min-w-[260px] items-center gap-3.5 rounded-[22px] border border-slate-900/10 bg-white/70 px-5 py-4 shadow-[0_24px_60px_rgba(54,77,80,0.1)]">
-            <span
-              className={cn(
-                "inline-block h-3 w-3 rounded-full",
-                repoReady
-                  ? "bg-[#1d8c68] shadow-[0_0_0_6px_rgba(29,140,104,0.14)]"
-                  : "bg-[#d1842f] shadow-[0_0_0_6px_rgba(209,132,47,0.14)]"
-              )}
-            />
-            <div>
-              <strong>{repoReady ? "仓库可用" : "仓库未就绪"}</strong>
-              <div className="mt-1.5 text-[#728188]">
-                上次同步 {formatTime(bootstrap?.repoStatus.lastSyncedAt ?? null)}
-              </div>
-            </div>
+      <header className="relative z-50 flex min-h-[52px] items-center justify-between gap-4 overflow-visible border-b border-ui-border bg-surface px-ui-4 py-ui-2">
+        <div className="flex min-w-0 items-center gap-ui-3">
+          <span
+            className={cn(
+              "grid h-8 w-8 shrink-0 place-items-center rounded-ui-md text-sm font-bold text-white",
+              isFragmentLibrary ? "bg-[#7654ca]" : "bg-primary",
+            )}
+          >
+            {isFragmentLibrary ? "PF" : "GF"}
+          </span>
+          <div className="min-w-0">
+            <h1 className="m-0 truncate text-base font-bold text-foreground">
+              {isFragmentLibrary ? "提示词片段库" : "配置工作台"}
+            </h1>
           </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-ui-2">
           <div className="relative">
-            <button
-              className="flex w-full items-center justify-between gap-3 rounded-[22px] border border-slate-900/10 bg-white/70 px-5 py-4 text-left shadow-[0_24px_60px_rgba(54,77,80,0.1)] transition duration-200 hover:-translate-y-px"
-              onClick={() => setAccountMenuOpen((current) => !current)}
-              type="button"
+            <Button
+              aria-expanded={showRepoDetails}
+              onClick={() =>
+                setOpenHeaderPopover((current) =>
+                  current === "repository" ? null : "repository",
+                )
+              }
+              size="sm"
+              variant="ghost"
             >
-              <div className="min-w-0">
-                <strong className="block truncate">{authUser.id}</strong>
-                <div className="mt-1.5 text-sm text-[#728188]">当前账号</div>
-              </div>
               <span
-                className={cn(
-                  "shrink-0 rounded-full px-3 py-1 text-xs font-semibold",
-                  authUser.role === "admin"
-                    ? "bg-[#0e6b72]/10 text-[#0e6b72]"
-                    : "bg-[#143138]/[0.08] text-[#53676e]"
-                )}
-              >
-                {currentRoleLabel}
+                className={cn("h-2 w-2 rounded-full", repoReady ? "bg-success" : "bg-warning")}
+              />
+              {repoReady ? "仓库可用" : "仓库未就绪"}
+              <span className="text-xs text-subtle-foreground">
+                {formatTime(bootstrap?.repoStatus.lastSyncedAt ?? null)}
               </span>
-            </button>
+            </Button>
+            {showRepoDetails ? (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-30 grid w-[360px] gap-ui-3 rounded-ui-lg border border-ui-border bg-surface p-ui-4 text-sm shadow-ui-overlay">
+                <div>
+                  <span className="block text-xs text-subtle-foreground">远程仓库</span>
+                  <span className="mt-1 block break-all text-foreground">{remoteUrl}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-ui-3">
+                  <div>
+                    <span className="block text-xs text-subtle-foreground">分支</span>
+                    <span className="mt-1 block truncate text-foreground">
+                      {bootstrap?.config.branch || "-"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-subtle-foreground">当前 HEAD</span>
+                    <span className="mt-1 block truncate font-mono text-xs text-foreground">
+                      {repoHead || "-"}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="block text-xs text-subtle-foreground">展示目录</span>
+                  <span className="mt-1 block break-all text-foreground">{displayRoot}</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          {!showEnvironmentSettings ? (
+            <>
+              <Button
+                onClick={() =>
+                  reviewOpen ? setMainView("workspace") : void loadReviewChanges()
+                }
+                size="sm"
+                variant={reviewOpen ? "primary" : "secondary"}
+              >
+                {reviewOpen ? "返回文件" : "版本比对"}
+              </Button>
+              <Button
+                onClick={() => void syncRepository()}
+                disabled={syncing}
+                size="sm"
+                variant="secondary"
+              >
+                {syncing ? "同步中..." : "同步"}
+              </Button>
+            </>
+          ) : null}
+          <div className="relative">
+            <Button
+              aria-expanded={accountMenuOpen}
+              onClick={() =>
+                setOpenHeaderPopover((current) => (current === "account" ? null : "account"))
+              }
+              size="sm"
+              variant="secondary"
+            >
+              <span className="max-w-28 truncate">{authUser.id}</span>
+              <Badge variant={authUser.role === "admin" ? "primary" : "neutral"}>
+                {currentRoleLabel}
+              </Badge>
+            </Button>
             {accountMenuOpen ? (
-              <div className="absolute right-0 z-30 mt-2 grid w-48 gap-1 rounded-[18px] border border-slate-900/10 bg-white p-2 shadow-[0_20px_50px_rgba(33,51,63,0.16)]">
+              <div className="absolute right-0 z-30 mt-2 grid w-48 gap-1 rounded-ui-lg border border-ui-border bg-surface p-1.5 shadow-ui-overlay">
                 {authUser.role === "admin" ? (
                   <button
-                    className="rounded-2xl border-0 bg-transparent px-3 py-2.5 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                    className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
                     onClick={() => {
-                      setAccountMenuOpen(false);
+                      setOpenHeaderPopover(null);
                       void openEnvironmentSettings();
                     }}
                     type="button"
@@ -1621,17 +1911,17 @@ export default function App(): JSX.Element {
                   </button>
                 ) : null}
                 <button
-                  className="rounded-2xl border-0 bg-transparent px-3 py-2.5 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                  className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
                   onClick={() => {
-                    setActivationDialogOpen(true);
-                    setAccountMenuOpen(false);
+                    setActiveDialog({ type: "activation" });
+                    setOpenHeaderPopover(null);
                   }}
                   type="button"
                 >
                   输入激活码
                 </button>
                 <button
-                  className="rounded-2xl border-0 bg-transparent px-3 py-2.5 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                  className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
                   onClick={() => void logoutCurrentUser()}
                   type="button"
                 >
@@ -1644,9 +1934,9 @@ export default function App(): JSX.Element {
       </header>
 
       {activationDialogOpen ? (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-[#10262b]/35 px-4">
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-[#10262b]/35 px-4">
           <form
-            className="w-full max-w-md rounded-[24px] border border-slate-900/10 bg-white p-5 shadow-[0_28px_80px_rgba(16,38,43,0.24)]"
+            className="w-full max-w-md rounded-lg border border-slate-900/10 bg-white p-4 shadow-[0_28px_80px_rgba(16,38,43,0.24)]"
             onSubmit={(event) => void submitActivationCode(event)}
           >
             <div className="mb-4">
@@ -1664,11 +1954,11 @@ export default function App(): JSX.Element {
                 value={activationCode}
               />
             </label>
-            <div className="mt-5 flex justify-end gap-3">
+            <div className="mt-4 flex justify-end gap-2">
               <button
                 className={secondaryButtonClass}
                 onClick={() => {
-                  setActivationDialogOpen(false);
+                  setActiveDialog(null);
                   setActivationCode("");
                 }}
                 type="button"
@@ -1688,7 +1978,7 @@ export default function App(): JSX.Element {
       ) : null}
 
       {showEnvironmentSettings ? (
-        <main className={panelClass}>
+        <main className="h-[calc(100vh-52px)] overflow-auto bg-surface p-ui-4">
           <div className={panelTitleRowClass}>
             <div>
               <h2 className="m-0 text-lg">环境配置</h2>
@@ -1700,7 +1990,7 @@ export default function App(): JSX.Element {
               <button
                 className={secondaryButtonClass}
                 onClick={() => {
-                  setShowEnvironmentSettings(false);
+                  setMainView("workspace");
                   setEnvironmentDraft([]);
                 }}
                 type="button"
@@ -1721,7 +2011,7 @@ export default function App(): JSX.Element {
           <div className="grid gap-3">
             {environmentDraft.map((environment, index) => (
               <div
-                className="grid gap-3 rounded-[22px] border border-[#183039]/10 bg-[#f6f9f7]/85 p-4"
+                className="grid gap-2 rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85 p-3"
                 key={environment.id || index}
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1733,7 +2023,7 @@ export default function App(): JSX.Element {
                         disabled={environment.kind === "fragment-library"}
                         onChange={(event) =>
                           updateEnvironmentDraft(index, {
-                            requiresAdminToEdit: event.target.checked
+                            requiresAdminToEdit: event.target.checked,
                           })
                         }
                         type="checkbox"
@@ -1741,7 +2031,7 @@ export default function App(): JSX.Element {
                       需要管理员权限编辑
                     </label>
                     <button
-                      className="rounded-2xl border-0 bg-[#c94a35]/10 px-4 py-2.5 text-[#9f2f20] transition duration-200 hover:-translate-y-px hover:bg-[#c94a35]/15 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0"
+                      className="rounded-lg border-0 bg-[#c94a35]/10 px-3 py-2 text-[#9f2f20] transition duration-200 hover:-translate-y-px hover:bg-[#c94a35]/15 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 motion-reduce:hover:translate-y-0 motion-reduce:transition-none"
                       disabled={environmentDraft.length <= 1}
                       onClick={() => removeEnvironmentDraft(index)}
                       type="button"
@@ -1757,7 +2047,7 @@ export default function App(): JSX.Element {
                       className={inputClass}
                       onChange={(event) =>
                         updateEnvironmentDraft(index, {
-                          label: event.target.value
+                          label: event.target.value,
                         })
                       }
                       value={environment.label}
@@ -1768,10 +2058,12 @@ export default function App(): JSX.Element {
                     <select
                       className={inputClass}
                       onChange={(event) => {
-                        const kind = event.target.value === "fragment-library" ? "fragment-library" : "config";
+                        const kind =
+                          event.target.value === "fragment-library" ? "fragment-library" : "config";
                         updateEnvironmentDraft(index, {
                           kind,
-                          requiresAdminToEdit: kind === "fragment-library" ? false : environment.requiresAdminToEdit
+                          requiresAdminToEdit:
+                            kind === "fragment-library" ? false : environment.requiresAdminToEdit,
                         });
                       }}
                       value={environment.kind}
@@ -1786,7 +2078,7 @@ export default function App(): JSX.Element {
                       className={inputClass}
                       onChange={(event) =>
                         updateEnvironmentDraft(index, {
-                          root: event.target.value
+                          root: event.target.value,
                         })
                       }
                       placeholder="nacos-config/config/dev"
@@ -1807,294 +2099,772 @@ export default function App(): JSX.Element {
           </button>
         </main>
       ) : (
-      <div
-        ref={layoutRef}
-        className="grid gap-[22px] min-[961px]:grid-cols-[var(--file-list-grid)]"
-        style={workspaceLayoutStyle}
-      >
-        <aside className={cn(
-          panelClass,
-          "relative min-w-0 overflow-x-hidden min-[961px]:sticky min-[961px]:top-5 min-[961px]:max-h-[calc(100vh-40px)] min-[961px]:overflow-y-auto",
-          isFragmentLibrary && "border border-[#7654ca]/20 bg-[#fcfbff] shadow-[0_20px_54px_rgba(90,62,158,0.1)]"
-        )}>
-          <div className={panelTitleRowClass}>
-            <h2 className="m-0 text-lg">{isFragmentLibrary ? "片段文件" : "文件列表"}</h2>
-            <button className={secondaryButtonClass} onClick={() => void syncRepository()} disabled={syncing}>
-              {syncing ? "同步中..." : "同步仓库"}
-            </button>
-          </div>
-
-          <div className={formRowClass}>
-            <span className={formLabelClass}>当前环境</span>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-              <select
-                className={inputClass}
-                value={activeEnvironment?.id ?? ""}
-                onChange={(event) => {
-                  const nextEnvironmentId = event.target.value;
-                  setSelectedEnvironment(nextEnvironmentId);
-                  reviewDiffRequestIdRef.current += 1;
-                  setReviewCommits([]);
-                  setSelectedReviewHash("");
-                  setReviewDiff(null);
-                  setSelectedReviewPath("");
-                  setSelectedHistoryHash("");
-                  setSelectedHistoryDetail(null);
-                  if (reviewOpen) {
-                    void loadReviewChanges(nextEnvironmentId);
-                  }
-                  const nextEnvironment = environmentOptions.find(
-                    (item) => item.id === nextEnvironmentId
-                  );
-                  const replacedPath = selectedPath
-                    ? replaceEnvironmentRoot(selectedPath, environmentOptions, nextEnvironmentId)
-                    : null;
-                  const nextPath = selectedPath
-                    ? replacedPath
-                    : null;
-                  if (nextPath && files.some((file) => file.path === nextPath)) {
-                    setSelectedPath(nextPath);
-                    return;
-                  }
-
-                  const fallbackPath =
-                    nextEnvironment
-                      ? files.find(
-                        (file) =>
-                          getPathWithinRoot(file.path, nextEnvironment.root) !== null
-                      )?.path ?? ""
-                      : "";
-                  setSelectedPath(fallbackPath);
-                }}
-              >
-                {environmentOptions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                className={cn(secondaryButtonClass, "w-[104px] justify-center whitespace-nowrap px-0")}
-                type="button"
-                onClick={() => void loadReviewChanges()}
-                disabled={reviewLoading}
-              >
-                版本比对
-              </button>
-            </div>
-          </div>
-
-          <div className="mb-3 min-w-0 rounded-2xl bg-[#e8f1f0]/70 px-3 py-2">
-            <div className="flex min-h-[34px] min-w-0 items-center gap-2">
-              <span
-                className="min-w-0 flex-1 truncate text-sm text-[#183039]"
-                title={remoteUrl}
-              >
-                {remoteUrl}
-              </span>
-              <button
-                type="button"
-                className="shrink-0 rounded-full bg-white/70 px-3 py-1.5 text-xs text-[#315159] transition hover:bg-white"
-                onClick={() => setShowRepoDetails((current) => !current)}
-              >
-                {showRepoDetails ? "收起" : "详情"}
-              </button>
-            </div>
-
-            {showRepoDetails ? (
-              <div className="mt-2 grid min-w-0 gap-2 border-t border-[#183039]/10 pt-2 text-sm">
-                <div className="min-w-0">
-                  <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">远程仓库</span>
-                  <span className="block min-w-0 break-all text-[#183039]">{remoteUrl}</span>
-                </div>
-                <div className="grid min-w-0 grid-cols-2 gap-2">
-                  <div className="min-w-0">
-                    <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">分支</span>
-                    <span className="block min-w-0 truncate text-[#183039]" title={bootstrap?.config.branch || "-"}>
-                      {bootstrap?.config.branch || "-"}
-                    </span>
-                  </div>
-                  <div className="min-w-0">
-                    <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">当前 HEAD</span>
-                    <span className="block min-w-0 truncate font-mono text-xs text-[#183039]" title={repoHead || "-"}>
-                      {repoHead || "-"}
-                    </span>
-                  </div>
-                </div>
-                <div className="min-w-0">
-                  <span className="mb-0.5 block text-xs uppercase tracking-[0.08em] text-[#6c7d83]">展示目录</span>
-                  <span className="block min-w-0 break-all text-[#183039]">{displayRoot}</span>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {isFragmentLibrary ? (
-            <div className="mb-3 grid grid-cols-2 gap-2">
-              <button
-                className={secondaryButtonClass}
-                disabled={fragmentFileOperation}
-                onClick={() => setFragmentFileDialogMode("create")}
-                type="button"
-              >
-                新建片段
-              </button>
-              <button
-                className={primaryButtonClass}
-                disabled={!selectedPath || editorDirty || fragmentFileOperation}
-                onClick={() => setFragmentBatchOpen(true)}
-                title={editorDirty ? "请先提交当前片段，再执行批量替换" : undefined}
-                type="button"
-              >
-                批量替换
-              </button>
-            </div>
-          ) : null}
-
-          <label className="mb-4 flex min-h-[42px] items-center gap-2 rounded-xl border border-[#dfe4e6] bg-white px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-            <svg
-              className="h-[18px] w-[18px] shrink-0 text-[#8b9499]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4 4" />
-            </svg>
-            <input
-              className="min-w-0 flex-1 border-0 bg-transparent py-2.5 text-[15px] text-[#24292f] outline-none placeholder:text-[#8b8f93]"
-              value={fileQuery}
-              onChange={(event) => setFileQuery(event.target.value)}
-              placeholder="搜索文件名..."
-            />
-          </label>
-
-          <div className="-mx-2 min-w-0 overflow-x-hidden rounded-xl bg-[#f1f5f4] px-2 py-2">
-            {visibleFiles.length === 0 ? (
-              <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
-            ) : filteredVisibleFiles.length === 0 ? (
-              <div className={emptyBlockClass}>没有匹配当前检索条件的文件</div>
-            ) : (
-              <FileTree
-                nodes={fileTree}
-                selectedPath={selectedPath}
-                onSelect={setSelectedPath}
-                onRename={
-                  isFragmentLibrary && !fragmentFileOperation
-                    ? (pathValue) => {
-                      setSelectedPath(pathValue);
-                      setFragmentFileDialogMode("rename");
-                    }
-                    : undefined
-                }
-                onDelete={
-                  isFragmentLibrary && !fragmentFileOperation
-                    ? (pathValue) => void deleteFragment(pathValue)
-                    : undefined
-                }
-              />
-            )}
-          </div>
-          <button
-            type="button"
-            aria-label="拖动调整文件列表宽度"
-            className={cn(
-              "absolute inset-y-4 right-0 hidden w-3 cursor-col-resize touch-none rounded-full transition min-[961px]:block",
-              resizingFileList ? "bg-[#0e6b72]/15" : "hover:bg-[#0e6b72]/10"
-            )}
-            onPointerDown={startFileListResize}
-          >
-            <span
+        <div
+          ref={layoutRef}
+          className={cn(
+            "grid h-[calc(100vh-52px)] min-h-0 gap-0 overflow-hidden bg-surface",
+            reviewOpen ? "grid-cols-1" : "grid-cols-[var(--file-list-grid)]",
+          )}
+          style={workspaceLayoutStyle}
+        >
+          {!reviewOpen ? (
+            <aside
               className={cn(
-                "absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full transition",
-                resizingFileList ? "bg-[#0e6b72]/70" : "bg-[#183039]/15"
+                "relative flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-ui-border bg-surface-subtle p-ui-3",
+                isFragmentLibrary && "bg-[#faf9fd]",
               )}
-            />
-          </button>
-        </aside>
+            >
+              <div className="mb-ui-3 flex items-center justify-between gap-ui-2">
+                <h2 className="m-0 text-base font-bold text-foreground">
+                  {isFragmentLibrary ? "提示词片段" : "配置项"}
+                </h2>
+                <Badge
+                  className={isFragmentLibrary ? "bg-[#eee9fb] text-[#6848b8]" : undefined}
+                  variant={isFragmentLibrary ? "neutral" : "primary"}
+                >
+                  {isFragmentLibrary ? "片段库" : "配置环境"}
+                </Badge>
+              </div>
 
-        <main className="grid gap-[22px]">
-          {reviewOpen ? (
-            <section className={panelClass}>
-              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <h2 className="m-0 text-lg">版本比对</h2>
-                  <div className="mt-2 text-sm text-[#5d7077]">
-                    {activeEnvironment?.label ?? "当前环境"} 自指定日期至今的配置改动
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="text-sm text-[#4d6269]">
-                    <div className="flex items-center gap-2">
-                      <input
-                        className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
-                        type="date"
-                        value={reviewSince}
-                        onChange={(event) => setReviewSince(event.target.value)}
-                      />
-                      <span className="text-[#8a999f]">-</span>
-                      <input
-                        className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
-                        type="date"
-                        value={reviewUntil}
-                        onChange={(event) => setReviewUntil(event.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <button
-                    className={cn(secondaryButtonClass, "w-[72px] justify-center px-0")}
-                    type="button"
-                    onClick={() => void loadReviewChanges()}
-                    disabled={reviewLoading}
-                  >
-                    {reviewLoading ? "查询中..." : "查询"}
-                  </button>
+              <div className={formRowClass}>
+                <span className={formLabelClass}>当前环境</span>
+                <select
+                  className={inputClass}
+                  value={activeEnvironment?.id ?? ""}
+                  onChange={(event) => {
+                    const nextEnvironmentId = event.target.value;
+                    setSelectedEnvironment(nextEnvironmentId);
+                    reviewDiffRequestIdRef.current += 1;
+                    dispatchReview({ type: "clearResults" });
+                    dispatchHistory({ type: "reset" });
+                    const nextEnvironment = environmentOptions.find(
+                      (item) => item.id === nextEnvironmentId,
+                    );
+                    const replacedPath = selectedPath
+                      ? replaceEnvironmentRoot(selectedPath, environmentOptions, nextEnvironmentId)
+                      : null;
+                    const nextPath = selectedPath ? replacedPath : null;
+                    if (nextPath && files.some((file) => file.path === nextPath)) {
+                      setSelectedPath(nextPath);
+                      return;
+                    }
+
+                    const fallbackPath = nextEnvironment
+                      ? (files.find(
+                        (file) => getPathWithinRoot(file.path, nextEnvironment.root) !== null,
+                      )?.path ?? "")
+                      : "";
+                    setSelectedPath(fallbackPath);
+                  }}
+                >
+                  {environmentOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {isFragmentLibrary ? (
+                <div className="mb-3 grid grid-cols-2 gap-2">
                   <button
                     className={secondaryButtonClass}
+                    disabled={fragmentFileOperation}
+                    onClick={() => setActiveDialog({ type: "fragment-file", mode: "create" })}
                     type="button"
-                    onClick={() => setReviewOpen(false)}
                   >
-                    关闭
+                    新建片段
                   </button>
+                  <button
+                    className={primaryButtonClass}
+                    disabled={!selectedPath || editorDirty || fragmentFileOperation}
+                    onClick={() => setActiveDialog({ type: "fragment-batch" })}
+                    title={editorDirty ? "请先提交当前片段，再执行批量替换" : undefined}
+                    type="button"
+                  >
+                    批量替换
+                  </button>
+                </div>
+              ) : null}
+
+              <label className={cn(searchFieldShellClass, "mb-ui-3")}>
+                <SearchIcon />
+                <input
+                  aria-label="搜索文件名"
+                  className={searchFieldInputClass}
+                  ref={fileSearchInputRef}
+                  value={fileQuery}
+                  onChange={(event) => setFileQuery(event.target.value)}
+                  placeholder="搜索文件名"
+                />
+                <kbd className={searchShortcutClass}>{shortcutModifier}P</kbd>
+              </label>
+
+              <div
+                className={cn(
+                  "-mx-1 min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-ui-md px-ui-2 py-ui-2",
+                  isFragmentLibrary ? "bg-[#f4f1fa]" : "bg-surface-muted/55",
+                )}
+              >
+                {visibleFiles.length === 0 ? (
+                  <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
+                ) : filteredVisibleFiles.length === 0 ? (
+                  <div className={emptyBlockClass}>没有匹配当前检索条件的文件</div>
+                ) : (
+                  <FileTree
+                    nodes={fileTree}
+                    selectedPath={selectedPath}
+                    onSelect={setSelectedPath}
+                    onRename={
+                      isFragmentLibrary && !fragmentFileOperation
+                        ? (pathValue) => {
+                          setSelectedPath(pathValue);
+                          setActiveDialog({ type: "fragment-file", mode: "rename" });
+                        }
+                        : undefined
+                    }
+                    onDelete={
+                      isFragmentLibrary && !fragmentFileOperation
+                        ? (pathValue) => void deleteFragment(pathValue)
+                        : undefined
+                    }
+                    tone={isFragmentLibrary ? "fragment" : "config"}
+                  />
+                )}
+              </div>
+              <button
+                type="button"
+                aria-label="拖动调整文件列表宽度"
+                className={cn(
+                  "absolute inset-y-4 right-0 hidden w-3 cursor-col-resize touch-none rounded-full transition min-[961px]:block",
+                  resizingFileList ? "bg-[#0e6b72]/15" : "hover:bg-[#0e6b72]/10",
+                )}
+                onPointerDown={startFileListResize}
+              >
+                <span
+                  className={cn(
+                    "absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full transition",
+                    resizingFileList ? "bg-[#0e6b72]/70" : "bg-[#183039]/15",
+                  )}
+                />
+              </button>
+            </aside>
+          ) : null}
+
+          <main className="flex min-h-0 min-w-0 flex-col">
+            {reviewOpen ? (
+              <section className={cn(workspaceWindowClass, "flex flex-col bg-surface p-ui-4")}>
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h2 className="m-0 text-lg">版本比对</h2>
+                    <div className="mt-2 text-sm text-[#5d7077]">
+                      {activeEnvironment?.label ?? "当前环境"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="text-sm text-[#4d6269]">
+                      <div className="flex items-center gap-2">
+                        <input
+                          className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
+                          type="date"
+                          value={reviewSince}
+                          onChange={(event) =>
+                            dispatchReview({ type: "setSince", value: event.target.value })
+                          }
+                        />
+                        <span className="text-[#8a999f]">-</span>
+                        <input
+                          className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
+                          type="date"
+                          value={reviewUntil}
+                          onChange={(event) =>
+                            dispatchReview({ type: "setUntil", value: event.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <button
+                      className={cn(secondaryButtonClass, "w-[72px] justify-center px-0")}
+                      type="button"
+                      onClick={() => void loadReviewChanges()}
+                      disabled={reviewLoading}
+                    >
+                      {reviewLoading ? "查询中..." : "查询"}
+                    </button>
+                  </div>
+                </div>
+
+                {reviewLoading && reviewCommits.length === 0 ? (
+                  <div className={emptyBlockClass}>正在查询版本改动...</div>
+                ) : reviewCommits.length === 0 ? (
+                  <div className={emptyBlockClass}>当前环境在该日期之后没有配置改动</div>
+                ) : (
+                  <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(0,1fr)] gap-3 overflow-hidden">
+                    <div className="min-h-0 overflow-hidden rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85">
+                      <div className="border-b border-[#183039]/10 px-3 py-2 text-sm font-semibold text-[#20404a]">
+                        {reviewCommits.length >= 200
+                          ? "最近 200 次相关提交"
+                          : `${reviewCommits.length} 次相关提交`}
+                      </div>
+                      <div className="h-full min-h-0 overflow-auto p-2">
+                        {reviewCommits.map((commit) => {
+                          const isSelected = commit.hash === selectedReviewCommit?.hash;
+                          return (
+                            <button
+                              key={commit.hash}
+                              className={cn(
+                                "mb-1.5 w-full rounded-lg border px-3 py-2.5 text-left transition duration-200",
+                                isSelected
+                                  ? "border-[#0e6b72]/25 bg-white shadow-[0_14px_32px_rgba(28,64,54,0.12)]"
+                                  : "border-transparent bg-transparent hover:bg-white/75",
+                              )}
+                              type="button"
+                              onClick={() => selectReviewCommit(commit)}
+                            >
+                              <span className="block break-words text-sm font-semibold text-[#183039]">
+                                {commit.message || "更新配置"}
+                              </span>
+                              <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
+                                <span>{commit.authorName}</span>
+                                <span>{formatTime(commit.committedAt)}</span>
+                                <span>{commit.files.length} 个文件</span>
+                              </span>
+                              <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
+                                {commit.hash}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="min-h-0 min-w-0 overflow-auto">
+                      {selectedReviewCommit ? (
+                        <>
+                          <div className="mb-3.5 flex flex-wrap items-center gap-2">
+                            <span className="break-all font-mono text-xs text-[#5d7077]">
+                              {selectedReviewCommit.hash}
+                            </span>
+                            <span className="rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
+                              {selectedReviewCommit.files.length} 个文件
+                            </span>
+                          </div>
+                          <div className="mb-3 grid max-h-[220px] gap-1.5 overflow-auto rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85 p-2">
+                            {selectedReviewCommit.files.map((file) => (
+                              <button
+                                key={`${selectedReviewCommit.hash}-${file.path}`}
+                                className={cn(
+                                  "grid grid-cols-[48px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition",
+                                  selectedReviewPath === file.path
+                                    ? "bg-white text-[#183039] shadow-[0_8px_20px_rgba(28,64,54,0.08)]"
+                                    : "text-[#40545b] hover:bg-white/75",
+                                )}
+                                type="button"
+                                onClick={() => void loadReviewDiff(selectedReviewCommit, file.path)}
+                              >
+                                <span className="font-mono text-xs text-[#7b8d94]">
+                                  {file.status}
+                                </span>
+                                <span className="min-w-0 break-all">{file.path}</span>
+                              </button>
+                            ))}
+                          </div>
+                          {reviewDiffLoading ? (
+                            <div className={emptyBlockClass}>正在加载文件差异...</div>
+                          ) : reviewDiff ? (
+                            <LazyDiffView
+                              before={reviewDiff.beforeContent}
+                              after={reviewDiff.afterContent}
+                              emptyText="该文件在此提交中没有内容变化"
+                              className="max-h-[520px] overflow-auto"
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {!reviewOpen ? (
+              <div
+                aria-label="当前文件功能"
+                className="flex h-12 shrink-0 items-stretch gap-ui-5 border-b border-ui-border bg-surface px-ui-4"
+                role="tablist"
+              >
+                {[
+                  {
+                    value: "editor" as const,
+                    label: "在线编辑",
+                    icon: (
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    value: "history" as const,
+                    label: "文件历史",
+                    icon: (
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                        <path d="M3 3v5h5M12 7v5l3 2" />
+                      </svg>
+                    ),
+                  },
+                ].map((item) => {
+                  const selected = activeWorkspaceSection === item.value;
+                  return (
+                    <button
+                      aria-controls={`file-${item.value}-panel`}
+                      aria-selected={selected}
+                      className={cn(
+                        "relative inline-flex min-w-[92px] items-center justify-center gap-ui-2 px-ui-1 text-sm font-semibold outline-none transition-colors duration-ui-normal ease-ui-standard focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/25 motion-reduce:transition-none",
+                        selected
+                          ? isFragmentLibrary
+                            ? "text-[#6848b8]"
+                            : "text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      id={`file-${item.value}-tab`}
+                      key={item.value}
+                      onClick={() => {
+                        setActiveWorkspaceSection(item.value);
+                        if (item.value === "editor") {
+                          window.requestAnimationFrame(() =>
+                            editorViewRef.current?.requestMeasure(),
+                          );
+                        }
+                      }}
+                      role="tab"
+                      type="button"
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "absolute inset-x-1 bottom-0 h-0.5 origin-center rounded-t-ui-full transition-transform duration-ui-normal ease-ui-emphasized motion-reduce:transition-none",
+                          isFragmentLibrary ? "bg-[#7654ca]" : "bg-primary",
+                          selected ? "scale-x-100" : "scale-x-0",
+                        )}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <section
+              aria-hidden={reviewOpen || activeWorkspaceSection !== "editor"}
+              aria-labelledby="file-editor-tab"
+              className={cn(
+                workspaceWindowClass,
+                "h-auto flex-1 bg-surface p-ui-4",
+                !reviewOpen && activeWorkspaceSection === "editor" ? "flex flex-col" : "hidden",
+              )}
+              id="file-editor-panel"
+              role="tabpanel"
+            >
+              <div className="mb-ui-3 flex min-h-12 items-center justify-between gap-ui-4 border-b border-ui-border pb-ui-3">
+                <div className="min-w-0">
+                  <h2 className="m-0 truncate text-base font-bold text-foreground">
+                    {selectedPath ? selectedPath.split("/").pop() : "请选择文件"}
+                  </h2>
+                  <div className="mt-1 truncate text-xs text-subtle-foreground">
+                    {selectedPath || "从左侧文件资源中选择要查看的文件"}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
+                  <Badge
+                    className={isFragmentLibrary ? "bg-[#eee9fb] text-[#6848b8]" : undefined}
+                    variant={isFragmentLibrary ? "neutral" : "primary"}
+                  >
+                    {activeEnvironment?.label ?? "未选择环境"}
+                  </Badge>
+                  {hasPendingChanges ? <Badge variant="warning">有未提交修改</Badge> : null}
+                  {isProtectedFileReadOnly ? <Badge variant="warning">普通用户只读</Badge> : null}
                 </div>
               </div>
 
-              {reviewLoading && reviewCommits.length === 0 ? (
-                <div className={emptyBlockClass}>正在查询版本改动...</div>
-              ) : reviewCommits.length === 0 ? (
-                <div className={emptyBlockClass}>当前环境在该日期之后没有配置改动</div>
-              ) : (
-                <div className="grid gap-4 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
-                  <div className="min-h-0 overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#f6f9f7]/85">
-                    <div className="border-b border-[#183039]/10 px-4 py-3 text-sm font-semibold text-[#20404a]">
-                      {reviewCommits.length >= 200 ? "最近 200 次相关提交" : `${reviewCommits.length} 次相关提交`}
+              {fileConflict ? (
+                <div className="mb-3 grid gap-2 rounded-lg border border-[#c94a35]/20 bg-[#c94a35]/10 px-3 py-2 text-sm text-[#79301f]">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <strong>检测到远程冲突</strong>
+                      <div className="mt-1 text-[#8d3322]">
+                        远程文件已更新，你的编辑内容已保留。
+                      </div>
                     </div>
-                    <div className="max-h-[520px] overflow-auto p-2">
-                      {reviewCommits.map((commit) => {
-                        const isSelected = commit.hash === selectedReviewCommit?.hash;
+                    <button
+                      className={secondaryButtonClass}
+                      type="button"
+                      onClick={() => {
+                        setEditorContent(fileConflict.remoteContent);
+                        setEditorDirty(false);
+                        setFileDetail((current) =>
+                          current
+                            ? {
+                              ...current,
+                              content: fileConflict.remoteContent,
+                              remoteContent: fileConflict.remoteContent,
+                              headContent: fileConflict.remoteContent,
+                              baseHead: fileConflict.remoteHead ?? current.baseHead,
+                              baseBlob: fileConflict.remoteBlob,
+                              remoteHead: fileConflict.remoteHead,
+                              remoteBlob: fileConflict.remoteBlob,
+                              isDirty: false,
+                            }
+                            : current,
+                        );
+                        setFileConflict(null);
+                      }}
+                    >
+                      使用远程版本
+                    </button>
+                  </div>
+                  <LazyDiffView
+                    before={fileConflict.remoteContent}
+                    after={fileConflict.localContent}
+                    emptyText="远程版本与我的修改没有内容差异"
+                  />
+                </div>
+              ) : null}
+
+              <div className="flex min-h-[42px] min-w-0 items-center justify-between gap-ui-3 border-y border-ui-border bg-surface-subtle px-ui-2 py-ui-1">
+                <div className="flex shrink-0 items-center gap-ui-2 pl-ui-2">
+                  <span className="text-xs font-semibold text-muted-foreground">编辑模式</span>
+                  <SegmentedControl
+                    ariaLabel="编辑模式"
+                    className="w-[148px] shrink-0 border-ui-border bg-surface"
+                    items={[
+                      { value: "editor", label: "纯编辑" },
+                      { value: "diff", label: "对比" },
+                    ]}
+                    onValueChange={setEditorViewMode}
+                    size="sm"
+                    tone="neutral"
+                    value={editorViewMode}
+                  />
+                </div>
+                <div className="flex min-w-0 items-center gap-ui-1">
+                  {editorViewMode === "diff" ? (
+                    <div
+                      className="mr-ui-1 flex items-center gap-ui-1 border-r border-ui-border pr-ui-2"
+                      aria-label="差异导航"
+                    >
+                      <Button
+                        onClick={() => goToAdjacentChange(-1)}
+                        disabled={!selectedPath}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        ↑ 上个差异
+                      </Button>
+                      <Button
+                        onClick={() => goToAdjacentChange(1)}
+                        disabled={!selectedPath}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        ↓ 下个差异
+                      </Button>
+                    </div>
+                  ) : null}
+                  {pendingReplay && editorViewMode === "editor" ? (
+                    <Button
+                      onClick={replayExtractedChange}
+                      disabled={!selectedPath || authUser?.role !== "admin"}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      重放修改 {pendingReplay.hash.slice(0, 8)}
+                    </Button>
+                  ) : null}
+                  <Button
+                    aria-expanded={editorSearchOpen}
+                    onClick={() =>
+                      editorSearchOpen
+                        ? dispatchEditorSearch({ type: "close" })
+                        : openEditorSearch()
+                    }
+                    disabled={!selectedPath}
+                    size="sm"
+                    variant={editorSearchOpen ? "secondary" : "ghost"}
+                  >
+                    搜索内容
+                    <kbd className={searchShortcutClass}>{shortcutModifier}F</kbd>
+                  </Button>
+                  <Button
+                    onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
+                    disabled={!selectedPath}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    {isFragmentLibrary ? "格式化 XML" : "校验 YAML"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="relative mt-ui-2 min-h-0 flex-1 overflow-hidden rounded-ui-md border border-ui-border">
+                {editorSearchOpen ? (
+                  <div
+                    className={cn(
+                      searchFieldShellClass,
+                      "absolute right-ui-2 top-ui-2 z-20 w-[560px] max-w-[calc(100%_-_16px)] py-ui-1 shadow-ui-overlay",
+                    )}
+                    role="search"
+                  >
+                    <SearchIcon />
+                    <input
+                      aria-label="搜索当前文件内容"
+                      className={searchFieldInputClass}
+                      disabled={!selectedPath}
+                      onChange={(event) =>
+                        dispatchEditorSearch({ type: "inputChanged", value: event.target.value })
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
+                        }
+                        if (event.key === "Escape") {
+                          dispatchEditorSearch({ type: "close" });
+                          editorViewRef.current?.focus();
+                        }
+                      }}
+                      placeholder="搜索当前文件内容"
+                      ref={editorSearchInputRef}
+                      value={editorSearchInput}
+                    />
+                    <Badge variant="neutral">
+                      {editorSearch
+                        ? `${displayedEditorSearchIndex + 1 || 0}/${editorSearchMatches.length}`
+                        : "0/0"}
+                    </Badge>
+                    <IconButton
+                      disabled={!editorSearchInput}
+                      label="查找上一处"
+                      onClick={() => findAdjacentEditorSearchMatch(-1)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      ↑
+                    </IconButton>
+                    <IconButton
+                      disabled={!editorSearchInput}
+                      label="查找下一处"
+                      onClick={() => findAdjacentEditorSearchMatch(1)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      ↓
+                    </IconButton>
+                    <IconButton
+                      label="关闭内容搜索"
+                      onClick={() => {
+                        dispatchEditorSearch({ type: "close" });
+                        editorViewRef.current?.focus();
+                      }}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      ×
+                    </IconButton>
+                  </div>
+                ) : null}
+                {!reviewOpen && activeWorkspaceSection === "editor" ? (
+                  editorViewMode === "diff" ? (
+                    <div
+                      ref={editorSurfaceRef}
+                      className="relative h-full min-h-0 overflow-hidden bg-[#fafcfb]/95"
+                    >
+                      <LazyMergeConfigEditor
+                        original={pendingBaseContent}
+                        value={editorContent}
+                        disabled={!selectedPath || isProtectedFileReadOnly}
+                        placeholderText="请选择要编辑的文件"
+                        validationIssue={editorValidationIssue}
+                        onViewReady={(view) => {
+                          editorViewRef.current = view;
+                        }}
+                        onChange={(view) => {
+                          setEditorDirty(true);
+                          setFileValidationError(null);
+                          setEditorContent(view.state.doc.toString());
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div key="editor" className="h-full min-h-0">
+                      <div
+                        ref={editorSurfaceRef}
+                        className={cn(
+                          "relative overflow-hidden bg-[#fafcfb]/95",
+                          editorSurfaceHeightClass,
+                        )}
+                      >
+                        <LazyConfigEditor
+                          filePath={selectedPath}
+                          value={editorContent}
+                          disabled={!selectedPath || isProtectedFileReadOnly}
+                          placeholderText="请选择要编辑的文件"
+                          validationIssue={editorValidationIssue}
+                          onViewReady={(view) => {
+                            editorViewRef.current = view;
+                          }}
+                          onChange={(view) => {
+                            setEditorDirty(true);
+                            setFileValidationError(null);
+                            setEditorContent(view.state.doc.toString());
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                ) : null}
+              </div>
+
+              {fileValidationError ? (
+                <div className="mt-ui-2 flex items-start gap-ui-2 rounded-ui-md border border-danger/15 bg-danger-soft px-ui-3 py-ui-2 text-sm text-danger">
+                  <strong className="shrink-0">格式校验未通过</strong>
+                  <span className="min-w-0 break-words">{fileValidationError}</span>
+                </div>
+              ) : null}
+
+              {hasPendingChanges ? (
+                <div className="mt-ui-2 grid grid-cols-[minmax(160px,0.75fr)_minmax(260px,1.3fr)_auto] items-center gap-ui-2 rounded-ui-md border border-ui-border-strong bg-surface px-ui-3 py-ui-2 shadow-ui-sm">
+                  <div className="min-w-0">
+                    <strong className="block text-sm text-foreground">当前文件有未提交修改</strong>
+                  </div>
+                  <textarea
+                    className={cn(inputClass, "min-h-9 resize-none py-ui-2 text-sm")}
+                    disabled={isProtectedFileReadOnly}
+                    rows={1}
+                    value={gitForm.extraMessage}
+                    placeholder={
+                      isProtectedFileReadOnly ? "当前环境仅管理员可提交" : "填写本次修改说明"
+                    }
+                    onChange={(event) =>
+                      setGitForm((current) => ({
+                        ...current,
+                        extraMessage: event.target.value,
+                      }))
+                    }
+                  />
+                  <div className="flex items-center gap-ui-2">
+                    <Button
+                      variant="danger"
+                      onClick={() => void discardCurrentFile()}
+                      disabled={!canDiscardCurrentFile || discarding}
+                    >
+                      {discarding ? "丢弃中..." : "丢弃修改"}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={() => {
+                        if (isProtectedFileReadOnly) {
+                          setError("普通用户在当前环境仅可查看文件与历史记录");
+                          return;
+                        }
+                        setActiveDialog({ type: "commit" });
+                      }}
+                      disabled={
+                        !selectedPath || isProtectedFileReadOnly || committing || discarding
+                      }
+                    >
+                      {committing ? "提交中..." : "提交并推送"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-ui-2 flex min-h-9 items-center justify-between rounded-ui-md border border-ui-border bg-surface-subtle px-ui-3 text-xs text-muted-foreground">
+                  <span>{selectedPath ? "当前文件没有未提交修改" : "选择文件后可开始编辑"}</span>
+                </div>
+              )}
+            </section>
+
+            <section
+              aria-hidden={reviewOpen || activeWorkspaceSection !== "history"}
+              aria-labelledby="file-history-tab"
+              className={cn(
+                workspaceWindowClass,
+                "h-auto flex-1 bg-surface p-ui-4",
+                !reviewOpen && activeWorkspaceSection === "history" ? "flex flex-col" : "hidden",
+              )}
+              id="file-history-panel"
+              role="tabpanel"
+            >
+              <div className="mb-ui-3 flex min-h-12 items-center justify-between gap-ui-4 border-b border-ui-border pb-ui-3">
+                <div className="min-w-0">
+                  <h2 className="m-0 truncate text-base font-bold text-foreground">
+                    {selectedPath ? selectedPath.split("/").pop() : "请选择文件"}
+                  </h2>
+                  <div className="mt-1 truncate text-xs text-subtle-foreground">
+                    {selectedPath || "从左侧文件资源中选择要查看的文件"}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
+                  <Badge
+                    className={isFragmentLibrary ? "bg-[#eee9fb] text-[#6848b8]" : undefined}
+                    variant={isFragmentLibrary ? "neutral" : "primary"}
+                  >
+                    {activeEnvironment?.label ?? "未选择环境"}
+                  </Badge>
+                  <Badge variant="neutral">
+                    {fileHistory.length ? `最近 ${fileHistory.length} 次提交` : "暂无提交记录"}
+                  </Badge>
+                </div>
+              </div>
+
+              {selectedHistory ? (
+                <div className="grid min-h-0 flex-1 gap-3 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
+                  <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85">
+                    <div className="border-b border-[#183039]/10 px-3 py-2 text-sm font-semibold text-[#20404a]">
+                      历史提交
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-auto p-2">
+                      {fileHistory.map((commit) => {
+                        const isSelected = commit.hash === selectedHistory.hash;
+                        const commitSubject = getCommitSubject(commit.message);
                         return (
                           <button
                             key={commit.hash}
                             className={cn(
-                              "mb-2 w-full rounded-[18px] border px-3.5 py-3 text-left transition duration-200",
+                              "mb-1.5 w-full rounded-lg border px-3 py-2.5 text-left transition duration-200",
                               isSelected
                                 ? "border-[#0e6b72]/25 bg-white shadow-[0_14px_32px_rgba(28,64,54,0.12)]"
-                                : "border-transparent bg-transparent hover:bg-white/75"
+                                : "border-transparent bg-transparent hover:bg-white/75",
                             )}
                             type="button"
-                            onClick={() => selectReviewCommit(commit)}
+                            onClick={() => {
+                              if (commit.hash !== selectedHistory?.hash) {
+                                dispatchHistory({ type: "select", hash: commit.hash });
+                              }
+                            }}
                           >
                             <span className="block break-words text-sm font-semibold text-[#183039]">
-                              {commit.message || "更新配置"}
+                              {commitSubject}
                             </span>
                             <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
                               <span>{commit.authorName}</span>
                               <span>{formatTime(commit.committedAt)}</span>
-                              <span>{commit.files.length} 个文件</span>
                             </span>
                             <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
                               {commit.hash}
@@ -2105,441 +2875,111 @@ export default function App(): JSX.Element {
                     </div>
                   </div>
 
-                  <div className="min-w-0">
-                    {selectedReviewCommit ? (
-                      <>
-                        <div className="mb-3.5 flex flex-wrap items-center gap-2">
-                          <span className="break-all font-mono text-xs text-[#5d7077]">
-                            {selectedReviewCommit.hash}
+                  <div className="flex min-h-0 min-w-0 flex-col">
+                    <div className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="break-words text-base font-bold text-[#183039]">
+                          {getCommitSubject(selectedHistory.message)}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
+                          <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                            {selectedHistory.authorName}
                           </span>
-                          <span className="rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
-                            {selectedReviewCommit.files.length} 个文件
+                          <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                            {formatTime(selectedHistory.committedAt)}
+                          </span>
+                          <span className="inline-flex min-h-7 max-w-full items-center break-all rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
+                            {selectedHistory.hash}
                           </span>
                         </div>
-                        <div className="mb-3 grid max-h-[220px] gap-2 overflow-auto rounded-[18px] border border-[#183039]/10 bg-[#f6f9f7]/85 p-2">
-                          {selectedReviewCommit.files.map((file) => (
-                            <button
-                              key={`${selectedReviewCommit.hash}-${file.path}`}
-                              className={cn(
-                                "grid grid-cols-[48px_minmax(0,1fr)] items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition",
-                                selectedReviewPath === file.path
-                                  ? "bg-white text-[#183039] shadow-[0_8px_20px_rgba(28,64,54,0.08)]"
-                                  : "text-[#40545b] hover:bg-white/75"
-                              )}
-                              type="button"
-                              onClick={() => void loadReviewDiff(selectedReviewCommit, file.path)}
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <div className="flex items-center gap-1">
+                          <button
+                            className={secondaryButtonClass}
+                            type="button"
+                            onClick={() =>
+                              selectedHistoryDetail && extractHistoryReplay(selectedHistoryDetail)
+                            }
+                            disabled={
+                              !selectedPath ||
+                              authUser?.role !== "admin" ||
+                              !selectedHistoryDetail ||
+                              selectedHistoryDetail.beforeContent ===
+                              selectedHistoryDetail.afterContent
+                            }
+                          >
+                            {pendingReplay?.hash === selectedHistory.hash &&
+                              pendingReplay.sourcePath === selectedPath
+                              ? "已提取修改"
+                              : "提取修改"}
+                          </button>
+                          <span className="group/help relative inline-flex">
+                            <IconButton
+                              aria-describedby="history-replay-help"
+                              className="h-6 w-6 rounded-ui-full text-[length:var(--font-size-ui-xs)] font-bold"
+                              label="查看提取修改说明"
+                              size="sm"
                             >
-                              <span className="font-mono text-xs text-[#7b8d94]">{file.status}</span>
-                              <span className="min-w-0 break-all">{file.path}</span>
-                            </button>
-                          ))}
+                              ?
+                            </IconButton>
+                            <span
+                              id="history-replay-help"
+                              role="tooltip"
+                              className="pointer-events-none invisible absolute bottom-[calc(100%+10px)] right-0 z-30 w-80 max-w-[calc(100vw-32px)] translate-y-1 rounded-lg border border-[#183039]/10 bg-[#183039] px-3.5 py-3 text-left text-xs font-normal leading-relaxed text-white opacity-0 shadow-[0_14px_36px_rgba(24,48,57,0.24)] transition duration-150 group-hover/help:visible group-hover/help:translate-y-0 group-hover/help:opacity-100 group-focus-within/help:visible group-focus-within/help:translate-y-0 group-focus-within/help:opacity-100 motion-reduce:transition-none"
+                            >
+                              <span className="block font-semibold">
+                                提取修改后，可尝试重放到任意环境或文件。
+                              </span>
+                              <span className="mt-1.5 block text-white/75">
+                                仅当待修改内容及其前后各约 4
+                                行上下文完全匹配时才会成功。内容已变更、上下文不足或存在重复时，不会执行重放。
+                              </span>
+                              <span className="absolute -bottom-1 right-2.5 h-2 w-2 rotate-45 bg-[#183039]" />
+                            </span>
+                          </span>
                         </div>
-                        {reviewDiffLoading ? (
-                          <div className={emptyBlockClass}>正在加载文件差异...</div>
-                        ) : reviewDiff ? (
-                          <LazyDiffView
-                            before={reviewDiff.beforeContent}
-                            after={reviewDiff.afterContent}
-                            emptyText="该文件在此提交中没有内容变化"
-                            className="max-h-[520px] overflow-auto"
-                          />
-                        ) : null}
-                      </>
-                    ) : null}
+                        <button
+                          className={primaryButtonClass}
+                          type="button"
+                          onClick={() =>
+                            selectedHistoryDetail &&
+                            void restoreHistoryCommit(selectedHistoryDetail)
+                          }
+                          disabled={
+                            !selectedPath ||
+                            isProtectedFileReadOnly ||
+                            restoringHash !== null ||
+                            !selectedHistoryDetail
+                          }
+                        >
+                          {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
+                        </button>
+                      </div>
+                    </div>
+                    {historyDetailLoading ? (
+                      <div className={emptyBlockClass}>正在加载历史差异...</div>
+                    ) : selectedHistoryDetail ? (
+                      <LazyDiffView
+                        before={selectedHistoryDetail.beforeContent}
+                        after={selectedHistoryDetail.afterContent}
+                        emptyText="该提交没有内容变化"
+                        display="unified"
+                        className="min-h-0 flex-1 overflow-auto"
+                      />
+                    ) : (
+                      <div className={emptyBlockClass}>历史差异加载失败，请重新选择该提交</div>
+                    )}
                   </div>
+                </div>
+              ) : (
+                <div className={cn(emptyBlockClass, "flex flex-1 items-center justify-center")}>
+                  当前文件还没有历史记录可展示
                 </div>
               )}
             </section>
-          ) : null}
-
-          <section className={panelClass}>
-            <div className="mb-4 grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(460px,auto)]">
-              <div className="min-w-0">
-                <h2 className="m-0 break-words text-lg">{selectedPath || "当前文件"}</h2>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#5d7077]">
-                  <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-[#214954]">
-                    {activeEnvironment?.label ?? "未选择环境"}
-                  </span>
-                  {isProtectedFileReadOnly ? (
-                    <span className="inline-flex items-center rounded-full bg-[#d8a21b]/15 px-3 py-1.5 text-[#785918]">
-                      普通用户只读
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              <div className="grid gap-2.5 sm:grid-cols-[minmax(220px,1fr)_auto_auto]">
-                <textarea
-                  className={cn(inputClass, "min-h-[46px] resize-y py-2.5 text-sm")}
-                  disabled={isProtectedFileReadOnly}
-                  rows={1}
-                  value={gitForm.extraMessage}
-                  placeholder={isProtectedFileReadOnly ? "当前环境仅管理员可提交" : "commit 信息"}
-                  onChange={(event) =>
-                    setGitForm((current) => ({
-                      ...current,
-                      extraMessage: event.target.value
-                    }))
-                  }
-                />
-                <button
-                  className={secondaryButtonClass}
-                  onClick={() => void discardCurrentFile()}
-                  disabled={!canDiscardCurrentFile || discarding}
-                >
-                  {discarding ? "丢弃中..." : "丢弃修改"}
-                </button>
-                <button
-                  className={primaryButtonClass}
-                  onClick={() => {
-                    if (isProtectedFileReadOnly) {
-                      setError("普通用户在当前环境仅可查看文件与历史记录");
-                      return;
-                    }
-                    setConfirmingCommit(true);
-                  }}
-                  disabled={!selectedPath || isProtectedFileReadOnly || committing || discarding}
-                >
-                  {committing ? "提交中..." : "提交并推送该文件"}
-                </button>
-              </div>
-            </div>
-
-            {fileConflict ? (
-              <div className="mb-3.5 grid gap-3 rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <strong>检测到远程冲突</strong>
-                    <div className="mt-1 text-[#8d3322]">
-                      远程文件已更新，你的编辑内容已保留。
-                    </div>
-                  </div>
-                  <button
-                    className={secondaryButtonClass}
-                    type="button"
-                    onClick={() => {
-                      setEditorContent(fileConflict.remoteContent);
-                      setEditorDirty(false);
-                      setFileDetail((current) =>
-                        current
-                          ? {
-                            ...current,
-                            content: fileConflict.remoteContent,
-                            remoteContent: fileConflict.remoteContent,
-                            headContent: fileConflict.remoteContent,
-                            baseHead: fileConflict.remoteHead ?? current.baseHead,
-                            baseBlob: fileConflict.remoteBlob,
-                            remoteHead: fileConflict.remoteHead,
-                            remoteBlob: fileConflict.remoteBlob,
-                            isDirty: false
-                          }
-                          : current
-                      );
-                      setFileConflict(null);
-                    }}
-                  >
-                    使用远程版本
-                  </button>
-                </div>
-                <LazyDiffView
-                  before={fileConflict.remoteContent}
-                  after={fileConflict.localContent}
-                  emptyText="远程版本与我的修改没有内容差异"
-                />
-              </div>
-            ) : null}
-
-            <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-2xl border border-[#183039]/10 bg-[#fcfdfc]/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-              <input
-                className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm font-normal text-[#183039] outline-none placeholder:text-[#8b9aa1]"
-                value={editorSearchInput}
-                onChange={(event) => setEditorSearchInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    findAdjacentEditorSearchMatch(event.shiftKey ? -1 : 1);
-                  }
-                }}
-                placeholder="搜索在线编辑内容"
-                disabled={!selectedPath}
-              />
-              <span className="shrink-0 rounded-lg bg-[#143138]/[0.06] px-2 py-1 text-center text-xs font-semibold text-[#6c7d84]">
-                {editorSearch ? `${editorSearchIndex + 1 || 0}/${editorSearchMatches.length}` : "0/0"}
-              </span>
-              <button
-                type="button"
-                className="h-8 shrink-0 rounded-xl border-0 bg-[#143138]/[0.07] px-3 text-sm font-semibold text-[#24424a] transition duration-200 hover:bg-[#143138]/[0.12] disabled:cursor-not-allowed disabled:opacity-45"
-                onClick={() => findAdjacentEditorSearchMatch(-1)}
-                disabled={!selectedPath || !editorSearchInput}
-              >
-                查找上一处
-              </button>
-              <button
-                type="button"
-                className="h-8 shrink-0 rounded-xl border-0 bg-[#0e6b72] px-3 text-sm font-semibold text-white transition duration-200 hover:bg-[#0b5b61] disabled:cursor-not-allowed disabled:opacity-45"
-                onClick={() => findAdjacentEditorSearchMatch(1)}
-                disabled={!selectedPath || !editorSearchInput}
-              >
-                查找下一处
-              </button>
-              <div
-                className={cn(
-                  "ml-2 flex shrink-0 items-center gap-1 border-l border-[#0e6b72]/20 pl-2",
-                  editorViewMode === "diff" ? "" : "pointer-events-none invisible"
-                )}
-                aria-label="差异导航"
-                aria-hidden={editorViewMode !== "diff"}
-              >
-                <button
-                  type="button"
-                  className="h-8 rounded-xl border border-[#0e6b72]/20 bg-[#e6f3f1] px-2.5 text-xs font-semibold text-[#0b5b61] transition duration-200 hover:bg-[#d8ece9] disabled:cursor-not-allowed disabled:opacity-45"
-                  onClick={() => goToAdjacentChange(-1)}
-                  disabled={!selectedPath}
-                  title="定位到上一个差异块"
-                >
-                  ↑ 上个差异
-                </button>
-                <button
-                  type="button"
-                  className="h-8 rounded-xl border-0 bg-[#0b6f67] px-2.5 text-xs font-semibold text-white transition duration-200 hover:bg-[#095c56] disabled:cursor-not-allowed disabled:opacity-45"
-                  onClick={() => goToAdjacentChange(1)}
-                  disabled={!selectedPath}
-                  title="定位到下一个差异块"
-                >
-                  ↓ 下个差异
-                </button>
-              </div>
-              <div className="ml-1 flex shrink-0 rounded-xl bg-[#143138]/[0.07] p-0.5" aria-label="编辑视图">
-                <button
-                  type="button"
-                  className={cn(
-                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
-                    editorViewMode === "editor"
-                      ? "bg-white text-[#183039] shadow-sm"
-                      : "text-[#6c7d84] hover:text-[#24424a]"
-                  )}
-                  onClick={() => setEditorViewMode("editor")}
-                  aria-pressed={editorViewMode === "editor"}
-                >
-                  纯编辑
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "h-7 rounded-lg px-2.5 text-xs font-semibold transition",
-                    editorViewMode === "diff"
-                      ? "bg-white text-[#183039] shadow-sm"
-                      : "text-[#6c7d84] hover:text-[#24424a]"
-                  )}
-                  onClick={() => setEditorViewMode("diff")}
-                  aria-pressed={editorViewMode === "diff"}
-                >
-                  对比
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3 overflow-hidden rounded-[22px] border border-[#183039]/10">
-              {editorViewMode === "diff" ? (
-                <div ref={editorSurfaceRef} className="relative h-[62vh] min-h-[360px] max-h-[640px] overflow-hidden bg-[#fafcfb]/95">
-                  <LazyMergeConfigEditor
-                    original={pendingBaseContent}
-                    value={editorContent}
-                    disabled={!selectedPath || isProtectedFileReadOnly}
-                    placeholderText="请选择要编辑的文件"
-                    validationIssue={editorValidationIssue}
-                    onViewReady={(view) => { editorViewRef.current = view; }}
-                    onChange={(view) => {
-                      setEditorDirty(true);
-                      setFileValidationError(null);
-                      setEditorContent(view.state.doc.toString());
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
-                    disabled={!selectedPath}
-                  >
-                    {isFragmentLibrary ? "XML格式化" : "校验 YAML"}
-                  </button>
-                </div>
-              ) : (
-              <div key="editor" className="grid content-start gap-3">
-                <div
-                  ref={editorSurfaceRef}
-                  className={cn("relative overflow-hidden bg-[#fafcfb]/95", editorSurfaceHeightClass)}
-                >
-                  {pendingReplay ? (
-                    <button
-                      type="button"
-                      className="absolute bottom-3 left-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
-                      title={`来源：${pendingReplay.sourcePath} @ ${pendingReplay.hash}`}
-                      onClick={replayExtractedChange}
-                      disabled={!selectedPath || authUser?.role !== "admin"}
-                    >
-                      重放修改 {pendingReplay.hash.slice(0, 8)}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="absolute bottom-3 right-3 z-10 rounded-xl border border-[#183039]/10 bg-white/65 px-3 py-2 text-xs font-semibold text-[#24424a] shadow-[0_8px_20px_rgba(28,64,54,0.12)] backdrop-blur-sm transition duration-200 hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
-                    disabled={!selectedPath}
-                  >
-                    {isFragmentLibrary ? "XML格式化" : "校验 YAML"}
-                  </button>
-                  <LazyConfigEditor
-                    value={editorContent}
-                    disabled={!selectedPath || isProtectedFileReadOnly}
-                    placeholderText="请选择要编辑的文件"
-                    validationIssue={editorValidationIssue}
-                    onViewReady={(view) => {
-                      editorViewRef.current = view;
-                    }}
-                    onChange={(view) => {
-                      setEditorDirty(true);
-                      setFileValidationError(null);
-                      setEditorContent(view.state.doc.toString());
-                    }}
-                  />
-                </div>
-                {fileValidationError ? (
-                  <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
-                    <strong>格式校验未通过</strong>
-                    <div className="mt-1 break-words text-[#8d3322]">{fileValidationError}</div>
-                  </div>
-                ) : null}
-                {!fileValidationError && editorValidationIssue ? (
-                  <div className="rounded-2xl border border-[#c94a35]/20 bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#79301f]">
-                    <strong>实时格式提示</strong>
-                    <div className="mt-1 break-words text-[#8d3322]">{editorValidationIssue.message}</div>
-                  </div>
-                ) : null}
-              </div>
-              )}
-            </div>
-          </section>
-
-          <section className={panelClass}>
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <h2 className="m-0 text-lg">文件历史记录</h2>
-              <span className="inline-flex items-center rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
-                {fileHistory.length ? `最近 ${fileHistory.length} 次提交` : "暂无提交记录"}
-              </span>
-            </div>
-
-            {selectedHistory ? (
-              <div className="grid gap-4 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
-                <div className="min-h-0 overflow-hidden rounded-[22px] border border-[#183039]/10 bg-[#f6f9f7]/85">
-                  <div className="border-b border-[#183039]/10 px-4 py-3 text-sm font-semibold text-[#20404a]">
-                    历史提交
-                  </div>
-                  <div className="max-h-[520px] overflow-auto p-2">
-                    {fileHistory.map((commit) => {
-                      const isSelected = commit.hash === selectedHistory.hash;
-                      const commitSubject = getCommitSubject(commit.message);
-                      return (
-                        <button
-                          key={commit.hash}
-                          className={cn(
-                            "mb-2 w-full rounded-[18px] border px-3.5 py-3 text-left transition duration-200",
-                            isSelected
-                              ? "border-[#0e6b72]/25 bg-white shadow-[0_14px_32px_rgba(28,64,54,0.12)]"
-                              : "border-transparent bg-transparent hover:bg-white/75"
-                          )}
-                          type="button"
-                          onClick={() => setSelectedHistoryHash(commit.hash)}
-                        >
-                          <span className="block break-words text-sm font-semibold text-[#183039]">
-                            {commitSubject}
-                          </span>
-                          <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
-                            <span>{commit.authorName}</span>
-                            <span>{formatTime(commit.committedAt)}</span>
-                          </span>
-                          <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
-                            {commit.hash}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="min-w-0">
-                  <div className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="break-words text-base font-bold text-[#183039]">
-                        {getCommitSubject(selectedHistory.message)}
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
-                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
-                          {selectedHistory.authorName}
-                        </span>
-                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
-                          {formatTime(selectedHistory.committedAt)}
-                        </span>
-                        <span className="inline-flex min-h-7 max-w-full items-center break-all rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
-                          {selectedHistory.hash}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      <div className="flex items-center gap-1">
-                        <button
-                          className={secondaryButtonClass}
-                          type="button"
-                          onClick={() => selectedHistoryDetail && extractHistoryReplay(selectedHistoryDetail)}
-                          disabled={
-                            !selectedPath ||
-                            authUser?.role !== "admin" ||
-                            !selectedHistoryDetail ||
-                            selectedHistoryDetail.beforeContent === selectedHistoryDetail.afterContent
-                          }
-                        >
-                          {pendingReplay?.hash === selectedHistory.hash && pendingReplay.sourcePath === selectedPath
-                            ? "已提取修改"
-                            : "提取修改"}
-                        </button>
-                        <span
-                          className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-[#183039]/15 text-xs font-bold text-[#61747b]"
-                          title="可将本次修改提取后，尝试重放到任意环境或文件。只有待修改内容及其前后各约 4 行上下文完全匹配时才会成功；内容已变更、上下文不足或重复时不会执行重放。"
-                        >
-                          ?
-                        </span>
-                      </div>
-                      <button
-                        className={primaryButtonClass}
-                        type="button"
-                        onClick={() => selectedHistoryDetail && void restoreHistoryCommit(selectedHistoryDetail)}
-                        disabled={!selectedPath || isProtectedFileReadOnly || restoringHash !== null || !selectedHistoryDetail}
-                      >
-                        {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
-                      </button>
-                    </div>
-                  </div>
-                  {historyDetailLoading ? (
-                    <div className={emptyBlockClass}>正在加载历史差异...</div>
-                  ) : selectedHistoryDetail ? (
-                    <LazyDiffView
-                      before={selectedHistoryDetail.beforeContent}
-                      after={selectedHistoryDetail.afterContent}
-                      emptyText="该提交没有内容变化"
-                      display="unified"
-                      className="max-h-[520px] overflow-auto"
-                    />
-                  ) : (
-                    <div className={emptyBlockClass}>历史差异加载失败，请重新选择该提交</div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className={emptyBlockClass}>当前文件还没有历史记录可展示</div>
-            )}
-          </section>
-        </main>
-
-      </div>
+          </main>
+        </div>
       )}
     </div>
   );

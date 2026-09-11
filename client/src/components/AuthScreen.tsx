@@ -24,13 +24,10 @@ export function AuthScreen(props: {
         className={cn(panelClass, "w-full max-w-[420px]")}
         onSubmit={props.onSubmit}
       >
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#5a7a72]">
-          Git File Console
-        </p>
         <h1 className="m-0 text-3xl leading-tight">
           {isRegistering ? "注册账号（请使用真实姓名或工号）" : "登录后修改配置"}
         </h1>
-        <div className="mt-6 grid gap-4">
+        <div className="mt-4 grid gap-3">
           <label className={formRowClass}>
             <span className={formLabelClass}>账号</span>
             <input
@@ -78,7 +75,7 @@ export function AuthScreen(props: {
             </label>
           ) : null}
           {props.error ? (
-            <div className="rounded-2xl bg-[#c94a35]/10 px-3.5 py-3 text-sm text-[#8d3322]">
+            <div className="rounded-lg bg-[#c94a35]/10 px-3 py-2 text-sm text-[#8d3322]">
               {props.error}
             </div>
           ) : null}

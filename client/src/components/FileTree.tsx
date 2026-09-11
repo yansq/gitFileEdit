@@ -11,6 +11,7 @@ export function FileTree(props: {
   onRename?: (path: string) => void;
   onDelete?: (path: string) => void;
   level?: number;
+  tone?: "config" | "fragment";
 }): JSX.Element {
   const level = props.level ?? 0;
 
@@ -25,6 +26,7 @@ export function FileTree(props: {
           onRename={props.onRename}
           onDelete={props.onDelete}
           level={level}
+          tone={props.tone ?? "config"}
         />
       ))}
     </div>
@@ -38,6 +40,7 @@ function FileTreeRow(props: {
   onRename?: (path: string) => void;
   onDelete?: (path: string) => void;
   level: number;
+  tone: "config" | "fragment";
 }): JSX.Element {
   const containsSelected = nodeContainsPath(props.node, props.selectedPath);
   const [open, setOpen] = useState(true);
@@ -50,7 +53,8 @@ function FileTreeRow(props: {
         <button
           type="button"
           className={cn(
-            "flex min-h-[34px] w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[15px] font-semibold text-[#24292f] transition hover:text-[#0f5e58]",
+            "flex min-h-[34px] w-full items-center gap-1.5 rounded-ui-sm px-1.5 text-left text-[15px] font-semibold text-[#24292f] transition-colors motion-reduce:transition-none",
+            props.tone === "fragment" ? "hover:text-[#6848b8]" : "hover:text-primary",
             containsSelected && "text-[#111827]"
           )}
           onClick={() => setOpen((current) => !current)}
@@ -74,6 +78,7 @@ function FileTreeRow(props: {
             onRename={props.onRename}
             onDelete={props.onDelete}
             level={props.level + 1}
+            tone={props.tone}
           />
         ) : null}
       </div>
@@ -84,8 +89,12 @@ function FileTreeRow(props: {
   return (
     <div
       className={cn(
-        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-md px-1.5 text-[15px] text-[#24292f] transition hover:text-[#0f5e58]",
-        props.selectedPath === props.node.path && "font-semibold text-[#111827]"
+        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-ui-sm px-1.5 text-[15px] text-[#24292f] transition-colors motion-reduce:transition-none",
+        props.tone === "fragment" ? "hover:text-[#6848b8]" : "hover:text-primary",
+        props.selectedPath === props.node.path &&
+          (props.tone === "fragment"
+            ? "bg-[#eee9fb] font-semibold text-[#6848b8]"
+            : "bg-primary-soft font-semibold text-primary")
       )}
       style={{ paddingLeft: `${indent + 18}px` }}
       title={props.node.path}
@@ -106,7 +115,7 @@ function FileTreeRow(props: {
             {props.onRename ? (
               <button
                 aria-label={`重命名 ${props.node.name}`}
-                className="rounded p-1 text-[#60767c] hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
+                className="rounded-lg p-1 text-[#60767c] hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
                 onClick={() => props.onRename?.(props.node.path)}
                 title="重命名"
                 type="button"
@@ -120,7 +129,7 @@ function FileTreeRow(props: {
             {props.onDelete ? (
               <button
                 aria-label={`删除 ${props.node.name}`}
-                className="rounded p-1 text-[#9f2f20] hover:bg-[#c94a35]/10"
+                className="rounded-lg p-1 text-[#9f2f20] hover:bg-[#c94a35]/10"
                 onClick={() => props.onDelete?.(props.node.path)}
                 title="删除"
                 type="button"

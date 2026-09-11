@@ -22,8 +22,8 @@ export function PromptFragmentFileDialog(props: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#10262b]/45 px-4">
-      <form className="w-full max-w-lg rounded-[26px] bg-white p-5 shadow-[0_28px_80px_rgba(16,38,43,0.28)]" onSubmit={(event) => void submit(event)}>
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-[#10262b]/45 px-4">
+      <form className="w-full max-w-lg rounded-lg bg-white p-4 shadow-[0_28px_80px_rgba(16,38,43,0.28)]" onSubmit={(event) => void submit(event)}>
         <h2 className="m-0 text-xl">{props.mode === "create" ? "新建提示词片段" : "重命名提示词片段"}</h2>
         <p className="mt-2 text-sm leading-relaxed text-[#6c7d83]">
           文件路径相对于当前片段库根目录，可包含文件夹；新建时未填写后缀会自动补为 .xml。
@@ -49,7 +49,7 @@ export function PromptFragmentFileDialog(props: {
             />
           </label>
         ) : null}
-        <div className="mt-5 flex justify-end gap-3">
+        <div className="mt-4 flex justify-end gap-2">
           <button className={secondaryButtonClass} onClick={props.onClose} type="button">取消</button>
           <button
             className={primaryButtonClass}

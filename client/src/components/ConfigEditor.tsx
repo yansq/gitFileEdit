@@ -1,5 +1,8 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { Compartment, EditorState } from "@codemirror/state";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { xml } from "@codemirror/lang-xml";
+import { yaml } from "@codemirror/lang-yaml";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -29,7 +32,6 @@ const configEditorTheme = EditorView.theme(
       fontSize: "13px",
       lineHeight: "1.65",
       overflow: "auto",
-      overscrollBehavior: "none",
       scrollPaddingBottom: "64px"
     },
     ".cm-content": {
@@ -89,7 +91,29 @@ function validationDecorations(issue: ConfigEditorValidationIssue | null) {
   ]);
 }
 
+function languageExtensionForPath(filePath: string): Extension {
+  const fileName = filePath.split("/").pop() ?? "";
+  if (!fileName) {
+    return [];
+  }
+
+  const extensionIndex = fileName.lastIndexOf(".");
+  if (extensionIndex <= 0 || extensionIndex === fileName.length - 1) {
+    return yaml();
+  }
+
+  const extension = fileName.slice(extensionIndex + 1).toLowerCase();
+  if (extension === "xml") {
+    return xml();
+  }
+  if (extension === "yaml" || extension === "yml") {
+    return yaml();
+  }
+  return [];
+}
+
 export function ConfigEditor(props: {
+  filePath: string;
   value: string;
   disabled: boolean;
   placeholderText: string;
@@ -103,6 +127,7 @@ export function ConfigEditor(props: {
   const internalValueSnapshotsRef = useRef(new Set<string>());
   const applyingExternalValueRef = useRef(false);
   const disabledCompartmentRef = useRef(new Compartment());
+  const languageCompartmentRef = useRef(new Compartment());
   const validationCompartmentRef = useRef(new Compartment());
   const onChangeRef = useRef(props.onChange);
 
@@ -129,6 +154,8 @@ export function ConfigEditor(props: {
           drawSelection(),
           placeholder(props.placeholderText),
           configEditorTheme,
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          languageCompartmentRef.current.of(languageExtensionForPath(props.filePath)),
           validationCompartmentRef.current.of(
             EditorView.decorations.of(validationDecorations(props.validationIssue))
           ),
@@ -199,6 +226,17 @@ export function ConfigEditor(props: {
       ])
     });
   }, [props.disabled]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      effects: languageCompartmentRef.current.reconfigure(languageExtensionForPath(props.filePath))
+    });
+  }, [props.filePath]);
 
   useEffect(() => {
     const view = viewRef.current;

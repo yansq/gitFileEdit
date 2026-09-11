@@ -82,11 +82,6 @@ export function normalizeActivationCode(code: string): string {
   return code.replace(/[\s-]+/g, "").toUpperCase();
 }
 
-export function formatActivationCode(code: string): string {
-  const normalized = normalizeActivationCode(code);
-  return normalized.match(/.{1,4}/g)?.join("-") ?? normalized;
-}
-
 export function parseValidActivationCodeForUser(
   userId: string,
   code: string
