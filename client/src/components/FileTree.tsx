@@ -54,7 +54,7 @@ function FileTreeRow(props: {
           type="button"
           className={cn(
             "flex min-h-[34px] w-full items-center gap-1.5 rounded-ui-sm px-1.5 text-left text-[15px] font-semibold text-[#24292f] transition-colors motion-reduce:transition-none",
-            props.tone === "fragment" ? "hover:text-[#6848b8]" : "hover:text-primary",
+            "hover:bg-surface-muted hover:text-foreground",
             containsSelected && "text-[#111827]"
           )}
           onClick={() => setOpen((current) => !current)}
@@ -90,11 +90,9 @@ function FileTreeRow(props: {
     <div
       className={cn(
         "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-ui-sm px-1.5 text-[15px] text-[#24292f] transition-colors motion-reduce:transition-none",
-        props.tone === "fragment" ? "hover:text-[#6848b8]" : "hover:text-primary",
+        "hover:bg-surface-muted hover:text-foreground",
         props.selectedPath === props.node.path &&
-          (props.tone === "fragment"
-            ? "bg-[#eee9fb] font-semibold text-[#6848b8]"
-            : "bg-primary-soft font-semibold text-primary")
+          "bg-primary-soft font-semibold text-primary"
       )}
       style={{ paddingLeft: `${indent + 18}px` }}
       title={props.node.path}
@@ -117,9 +115,7 @@ function FileTreeRow(props: {
                 aria-label={`重命名 ${props.node.name}`}
                 className={cn(
                   "rounded-lg p-1 text-[#60767c]",
-                  props.tone === "fragment"
-                    ? "hover:bg-[#7654ca]/10 hover:text-[#6848b8]"
-                    : "hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
+                  "hover:bg-surface-muted hover:text-foreground"
                 )}
                 onClick={() => props.onRename?.(props.node.path)}
                 title="重命名"

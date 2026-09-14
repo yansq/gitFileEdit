@@ -255,7 +255,7 @@ export function PromptFragmentBatchDialog(props: {
                           item.status === "missing" && "bg-[#d8a21b]/15 text-[#785918]",
                           item.status === "unchanged" && "bg-[#183039]/10 text-[#40545b]"
                         )}>{item.message}</span>
-                        <span className="rounded-full bg-[#7654ca]/10 px-2.5 py-1 text-xs text-[#6245aa]">
+                        <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-muted-foreground">
                           {item.environmentLabel}
                         </span>
                         <span className="min-w-0 break-all text-sm font-semibold text-[#183039]">{item.path}</span>

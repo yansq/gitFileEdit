@@ -20,7 +20,7 @@ const configEditorTheme = EditorView.theme(
   {
     "&": {
       background: "transparent",
-      color: "#183039",
+      color: "#1f2937",
       height: "100%"
     },
     "&.cm-focused": {
@@ -49,16 +49,16 @@ const configEditorTheme = EditorView.theme(
       padding: "0"
     },
     ".cm-gutters": {
-      backgroundColor: "rgba(238, 244, 243, 0.7)",
-      borderRight: "1px solid rgba(24, 48, 57, 0.1)",
-      color: "#8b9aa1"
+      backgroundColor: "rgba(243, 244, 246, 0.82)",
+      borderRight: "1px solid rgba(31, 41, 55, 0.1)",
+      color: "#9ca3af"
     },
     ".cm-lineNumbers .cm-gutterElement": {
       minWidth: "22px",
       padding: "0 4px 0 2px"
     },
     ".cm-placeholder": {
-      color: "#8b9aa1"
+      color: "#9ca3af"
     },
     ".cm-validationIssue": {
       backgroundColor: "rgba(201, 74, 53, 0.12)",

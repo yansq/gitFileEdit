@@ -9,11 +9,11 @@ export const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "border border-transparent bg-primary text-primary-foreground shadow-ui-xs hover:bg-primary-hover active:bg-primary-active",
+          "border border-transparent bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-active",
         secondary:
-          "border border-ui-border-strong bg-surface text-foreground shadow-ui-xs hover:border-primary/30 hover:bg-primary-soft/60 active:bg-primary-soft",
+          "border border-ui-border-strong bg-surface text-foreground shadow-ui-xs hover:bg-surface-muted active:bg-surface-muted",
         ghost:
-          "border border-transparent bg-transparent text-muted-foreground hover:bg-surface-muted hover:text-foreground active:bg-primary-soft",
+          "border border-transparent bg-transparent text-muted-foreground hover:bg-surface-muted hover:text-foreground active:bg-surface-muted",
         danger:
           "border border-danger/15 bg-danger-soft text-danger hover:border-danger/25 hover:bg-danger-soft/75 active:text-danger-hover"
       },

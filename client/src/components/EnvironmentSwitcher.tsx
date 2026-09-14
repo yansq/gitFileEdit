@@ -6,10 +6,7 @@ function EnvironmentGlyph({ fragment }: { fragment: boolean }): JSX.Element {
   return (
     <span
       aria-hidden="true"
-      className={cn(
-        "grid h-8 w-8 shrink-0 place-items-center rounded-ui-sm",
-        fragment ? "bg-[#eee9fb] text-[#6848b8]" : "bg-[#e6f3f1] text-[#0e6b72]",
-      )}
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-ui-sm bg-[#e8eef5] text-[#50677c]"
     >
       {fragment ? (
         <svg className="h-[17px] w-[17px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -28,10 +25,7 @@ function EnvironmentGlyph({ fragment }: { fragment: boolean }): JSX.Element {
 function EnvironmentTypeBadge({ fragment }: { fragment: boolean }): JSX.Element {
   return (
     <span
-      className={cn(
-        "shrink-0 rounded-ui-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
-        fragment ? "bg-[#eee9fb] text-[#6848b8]" : "bg-[#e6f3f1] text-[#0e6b72]",
-      )}
+      className="shrink-0 rounded-ui-full bg-[#e8eef5] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[#50677c]"
     >
       {fragment ? "片段库" : "配置"}
     </span>
@@ -128,11 +122,7 @@ export function EnvironmentSwitcher(props: {
                   aria-checked={selected}
                   className={cn(
                     "group/item flex min-h-14 w-full items-center gap-ui-3 rounded-ui-sm py-ui-2 pl-ui-3 pr-ui-2 text-left outline-none transition-colors duration-ui-fast focus-visible:ring-2 focus-visible:ring-primary/20 motion-reduce:transition-none",
-                    selected
-                      ? fragment
-                        ? "bg-[#f4f1fa]"
-                        : "bg-[#e6f3f1]"
-                      : "hover:bg-surface-muted",
+                    selected ? "bg-primary-soft" : "hover:bg-surface-muted",
                   )}
                   key={environment.id}
                   onClick={() => {
@@ -159,10 +149,8 @@ export function EnvironmentSwitcher(props: {
                     className={cn(
                       "h-4 w-4 shrink-0 transition-opacity duration-ui-fast motion-reduce:transition-none",
                       selected
-                        ? fragment
-                          ? "text-[#6848b8] opacity-100"
-                          : "text-[#0e6b72] opacity-100"
-                        : "opacity-0 group-hover/item:opacity-30",
+                        ? "text-primary opacity-100"
+                        : "text-muted-foreground opacity-0 group-hover/item:opacity-30",
                     )}
                     fill="none"
                     stroke="currentColor"

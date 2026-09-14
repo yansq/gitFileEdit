@@ -146,6 +146,175 @@ function SearchIcon(): JSX.Element {
   );
 }
 
+function ToolbarIconButton({ label, ...props }: ComponentProps<typeof IconButton>): JSX.Element {
+  return (
+    <span className="group/toolbar-action relative inline-flex">
+      <IconButton label={label} {...props} />
+      <span
+        className="pointer-events-none invisible absolute right-0 top-[calc(100%+8px)] z-40 w-max max-w-56 translate-y-[-2px] rounded-ui-xs bg-foreground px-ui-2 py-ui-1 text-[11px] font-medium leading-4 text-white opacity-0 shadow-ui-sm transition-[opacity,transform] duration-ui-fast group-hover/toolbar-action:visible group-hover/toolbar-action:translate-y-0 group-hover/toolbar-action:opacity-100 group-focus-within/toolbar-action:visible group-focus-within/toolbar-action:translate-y-0 group-focus-within/toolbar-action:opacity-100 motion-reduce:transition-none"
+        role="tooltip"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function UserRoleIcon({ role }: { role: "user" | "admin" }): JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
+      {role === "admin" ? (
+        <>
+          <path d="M12 3 19 6v5c0 4.5-2.8 8.2-7 10-4.2-1.8-7-5.5-7-10V6l7-3Z" />
+          <circle cx="12" cy="10" r="2" />
+          <path d="M8.5 16c.8-1.4 2-2.1 3.5-2.1s2.7.7 3.5 2.1" />
+        </>
+      ) : (
+        <>
+          <circle cx="12" cy="8" r="3" />
+          <path d="M5.5 20c.8-3.2 3-5 6.5-5s5.7 1.8 6.5 5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+interface FileWorkspaceHeaderProps {
+  isReadOnly: boolean;
+  selectedPath: string;
+}
+
+function FileWorkspaceHeader({ isReadOnly, selectedPath }: FileWorkspaceHeaderProps): JSX.Element {
+  const pathSegments = selectedPath.split("/").filter(Boolean);
+  const fileName = pathSegments.pop() || "请选择文件";
+
+  return (
+    <div className="mb-ui-2">
+      <nav
+        aria-label="当前文件路径"
+        className="flex min-w-0 items-center overflow-hidden text-xs text-subtle-foreground"
+        title={selectedPath || undefined}
+      >
+        {pathSegments.length ? (
+          pathSegments.map((segment, index) => (
+            <span className="flex min-w-0 items-center" key={`${segment}-${index}`}>
+              <span className="truncate">{segment}</span>
+              <span aria-hidden="true" className="shrink-0 px-0.5 text-ui-border-strong">
+                /
+              </span>
+            </span>
+          ))
+        ) : (
+          <span>尚未选择路径</span>
+        )}
+      </nav>
+      <div className="mt-1.5 flex min-w-0 items-center justify-between gap-ui-4">
+        <h2 className="m-0 min-w-0 truncate text-base font-bold text-foreground">{fileName}</h2>
+        {isReadOnly ? (
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-ui-full bg-warning" />
+            只读
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface WorkspaceSectionTabsProps {
+  activeSection: "editor" | "history";
+  onChange: (section: "editor" | "history") => void;
+}
+
+function WorkspaceSectionTabs({
+  activeSection,
+  onChange,
+}: WorkspaceSectionTabsProps): JSX.Element {
+  const items = [
+    {
+      value: "editor" as const,
+      label: "在线编辑",
+      icon: (
+        <svg
+          aria-hidden="true"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          viewBox="0 0 24 24"
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+      ),
+    },
+    {
+      value: "history" as const,
+      label: "文件历史",
+      icon: (
+        <svg
+          aria-hidden="true"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          viewBox="0 0 24 24"
+        >
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+          <path d="M3 3v5h5M12 7v5l3 2" />
+        </svg>
+      ),
+    },
+  ];
+
+  return (
+    <div
+      aria-label="当前文件功能"
+      className="mb-ui-2 flex h-10 shrink-0 items-stretch gap-ui-5 border-b border-ui-border"
+      role="tablist"
+    >
+      {items.map((item) => {
+        const selected = activeSection === item.value;
+        return (
+          <button
+            aria-controls={`file-${item.value}-panel`}
+            aria-selected={selected}
+            className={cn(
+              "relative inline-flex min-w-[92px] items-center justify-center gap-ui-2 px-ui-1 text-sm font-semibold outline-none transition-colors duration-ui-normal ease-ui-standard focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/25 motion-reduce:transition-none",
+              selected ? "text-primary" : "text-muted-foreground hover:text-foreground",
+            )}
+            id={`file-${item.value}-tab`}
+            key={item.value}
+            onClick={() => onChange(item.value)}
+            role="tab"
+            type="button"
+          >
+            {item.icon}
+            <span>{item.label}</span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute inset-x-1 bottom-0 h-0.5 origin-center rounded-t-ui-full transition-transform duration-ui-normal ease-ui-emphasized motion-reduce:transition-none",
+                "bg-primary",
+                selected ? "scale-x-100" : "scale-x-0",
+              )}
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function isProtectedEnvironmentId(environmentId: string | undefined): boolean {
   return environmentId === "uat";
 }
@@ -1161,12 +1330,7 @@ export default function App(): JSX.Element {
   }
 
   return (
-    <div
-      className={cn(
-        "h-screen min-w-[1080px] overflow-hidden bg-canvas",
-        isFragmentLibrary && "fragment-theme",
-      )}
-    >
+    <div className="h-screen min-w-[1080px] overflow-hidden bg-canvas">
       <ToastStack message={message} liveNotice={liveNotice} error={error} />
       {confirmingCommit && !isProtectedFileReadOnly ? (
         <CommitConfirmDialog
@@ -1211,8 +1375,8 @@ export default function App(): JSX.Element {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-ui-2">
-          <div className="relative">
+        <div className="flex shrink-0 items-center gap-ui-1">
+          <div className="relative mr-ui-1 flex items-center gap-0 border-r border-ui-border pr-ui-1">
             <Button
               aria-expanded={showRepoDetails}
               onClick={() =>
@@ -1255,35 +1419,96 @@ export default function App(): JSX.Element {
                 </div>
               </div>
             ) : null}
+            <ToolbarIconButton
+              onClick={() => {
+                setOpenHeaderPopover(null);
+                void syncRepository();
+              }}
+              disabled={syncing}
+              label={syncing ? "正在同步仓库" : "同步仓库"}
+              variant="ghost"
+            >
+              <svg
+                aria-hidden="true"
+                className={cn("h-4 w-4", syncing && "animate-spin motion-reduce:animate-none")}
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+                viewBox="0 0 24 24"
+              >
+                <path d="M20 7v5h-5" />
+                <path d="M4 17v-5h5" />
+                <path d="M6.1 9a7 7 0 0 1 11.6-2.6L20 8M4 16l2.3 1.6A7 7 0 0 0 17.9 15" />
+              </svg>
+            </ToolbarIconButton>
           </div>
           <Button
-            onClick={() => (reviewOpen ? setMainView("workspace") : void loadReviewChanges())}
+            aria-label={reviewOpen ? "返回文件工作区" : "打开版本比对"}
+            className={cn("px-ui-2", reviewOpen && "bg-primary-soft text-primary")}
+            onClick={() => {
+              setOpenHeaderPopover(null);
+              if (reviewOpen) {
+                setMainView("workspace");
+              } else {
+                void loadReviewChanges();
+              }
+            }}
             size="sm"
-            variant={reviewOpen ? "primary" : "secondary"}
+            variant="ghost"
           >
-            {reviewOpen ? "返回文件" : "版本比对"}
-          </Button>
-          <Button
-            onClick={() => void syncRepository()}
-            disabled={syncing}
-            size="sm"
-            variant="secondary"
-          >
-            {syncing ? "同步中..." : "同步"}
+            <svg
+              aria-hidden="true"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1.8"
+              viewBox="0 0 24 24"
+            >
+              {reviewOpen ? (
+                <path d="m15 18-6-6 6-6" />
+              ) : (
+                <>
+                  <path d="M8 5H5v14h3M16 5h3v14h-3" />
+                  <path d="m10 9 4 3-4 3" />
+                </>
+              )}
+            </svg>
+            {reviewOpen ? "返回编辑" : "版本比对"}
           </Button>
           <div className="relative">
             <Button
               aria-expanded={accountMenuOpen}
+              aria-label={`${authUser.id}，${currentRoleLabel}，用户选项`}
+              className={cn("gap-ui-2 px-ui-2 font-medium", accountMenuOpen && "bg-surface-muted")}
               onClick={() =>
                 setOpenHeaderPopover((current) => (current === "account" ? null : "account"))
               }
               size="sm"
-              variant="secondary"
+              variant="ghost"
             >
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-ui-full bg-surface-muted text-foreground">
+                <UserRoleIcon role={authUser.role} />
+              </span>
               <span className="max-w-28 truncate">{authUser.id}</span>
-              <Badge variant={authUser.role === "admin" ? "primary" : "neutral"}>
-                {currentRoleLabel}
-              </Badge>
+              <svg
+                aria-hidden="true"
+                className={cn(
+                  "h-3.5 w-3.5 text-subtle-foreground transition-transform duration-ui-normal motion-reduce:transition-none",
+                  accountMenuOpen && "rotate-180",
+                )}
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path d="m7 10 5 5 5-5" />
+              </svg>
             </Button>
             {accountMenuOpen ? (
               <div className="absolute right-0 z-30 mt-2 grid w-48 gap-1 rounded-ui-lg border border-ui-border bg-surface p-1.5 shadow-ui-overlay">
@@ -1499,59 +1724,50 @@ export default function App(): JSX.Element {
         style={workspaceLayoutStyle}
       >
         {!reviewOpen ? (
-          <aside
-            className={cn(
-              "relative flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-ui-border bg-surface-subtle px-ui-3 pt-ui-3",
-              isFragmentLibrary && "bg-[#faf9fd]",
-            )}
-          >
+          <aside className="relative flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-ui-border bg-surface-subtle px-ui-3 pt-ui-3">
             <EnvironmentSwitcher
               environments={environmentOptions}
               onValueChange={switchEnvironment}
               value={activeEnvironment?.id ?? ""}
             />
 
-            {isFragmentLibrary ? (
-              <div className="mb-3 grid grid-cols-2 gap-2">
-                <button
-                  className={secondaryButtonClass}
+            <div className="mb-ui-3 flex items-center gap-ui-2">
+              <label className={cn(searchFieldShellClass, "min-w-0 flex-1")}>
+                <SearchIcon />
+                <input
+                  aria-label="搜索文件名"
+                  className={searchFieldInputClass}
+                  ref={fileSearchInputRef}
+                  value={fileQuery}
+                  onChange={(event) => setFileQuery(event.target.value)}
+                  placeholder="搜索文件名"
+                />
+                <kbd className={searchShortcutClass}>{shortcutModifier}P</kbd>
+              </label>
+              {isFragmentLibrary ? (
+                <ToolbarIconButton
+                  className="h-9 w-9 shrink-0"
                   disabled={fragmentFileOperation}
+                  label="新建片段"
                   onClick={() => setActiveDialog({ type: "fragment-file", mode: "create" })}
-                  type="button"
+                  variant="secondary"
                 >
-                  新建片段
-                </button>
-                <button
-                  className={primaryButtonClass}
-                  disabled={!selectedPath || editorDirty || fragmentFileOperation}
-                  onClick={() => setActiveDialog({ type: "fragment-batch" })}
-                  title={editorDirty ? "请先提交当前片段，再执行批量替换" : undefined}
-                  type="button"
-                >
-                  批量替换
-                </button>
-              </div>
-            ) : null}
+                  <svg
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="1.8"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </ToolbarIconButton>
+              ) : null}
+            </div>
 
-            <label className={cn(searchFieldShellClass, "mb-ui-3")}>
-              <SearchIcon />
-              <input
-                aria-label="搜索文件名"
-                className={searchFieldInputClass}
-                ref={fileSearchInputRef}
-                value={fileQuery}
-                onChange={(event) => setFileQuery(event.target.value)}
-                placeholder="搜索文件名"
-              />
-              <kbd className={searchShortcutClass}>{shortcutModifier}P</kbd>
-            </label>
-
-            <div
-              className={cn(
-                "-mx-1 min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-t-ui-md px-ui-2 py-ui-2",
-                isFragmentLibrary ? "bg-[#f4f1fa]" : "bg-surface-muted/55",
-              )}
-            >
+            <div className="-mx-1 min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-ui-2 py-ui-2">
               {visibleFiles.length === 0 ? (
                 <div className={emptyBlockClass}>仓库中还没有可展示的文本文件</div>
               ) : filteredVisibleFiles.length === 0 ? (
@@ -1583,9 +1799,7 @@ export default function App(): JSX.Element {
               aria-label="拖动调整文件列表宽度"
               className={cn(
                 "absolute inset-y-0 right-0 hidden w-3 cursor-col-resize touch-none after:absolute after:inset-y-0 after:right-0 after:w-0.5 after:transition-colors min-[961px]:block",
-                resizingFileList
-                  ? "after:bg-primary/70"
-                  : "hover:after:bg-primary/45",
+                resizingFileList ? "after:bg-primary/70" : "hover:after:bg-ui-border-strong",
               )}
               onPointerDown={startFileListResize}
             />
@@ -1724,88 +1938,6 @@ export default function App(): JSX.Element {
             </section>
           ) : null}
 
-          {!reviewOpen ? (
-            <div
-              aria-label="当前文件功能"
-              className="flex h-12 shrink-0 items-stretch gap-ui-5 border-b border-ui-border bg-surface px-ui-4"
-              role="tablist"
-            >
-              {[
-                {
-                  value: "editor" as const,
-                  label: "在线编辑",
-                  icon: (
-                    <svg
-                      aria-hidden="true"
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  ),
-                },
-                {
-                  value: "history" as const,
-                  label: "文件历史",
-                  icon: (
-                    <svg
-                      aria-hidden="true"
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                      <path d="M3 3v5h5M12 7v5l3 2" />
-                    </svg>
-                  ),
-                },
-              ].map((item) => {
-                const selected = activeWorkspaceSection === item.value;
-                return (
-                  <button
-                    aria-controls={`file-${item.value}-panel`}
-                    aria-selected={selected}
-                    className={cn(
-                      "relative inline-flex min-w-[92px] items-center justify-center gap-ui-2 px-ui-1 text-sm font-semibold outline-none transition-colors duration-ui-normal ease-ui-standard focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/25 motion-reduce:transition-none",
-                      selected
-                        ? isFragmentLibrary
-                          ? "text-[#6848b8]"
-                          : "text-primary"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                    id={`file-${item.value}-tab`}
-                    key={item.value}
-                    onClick={() => {
-                      setActiveWorkspaceSection(item.value);
-                      if (item.value === "editor") {
-                        window.requestAnimationFrame(() => editorViewRef.current?.requestMeasure());
-                      }
-                    }}
-                    role="tab"
-                    type="button"
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "absolute inset-x-1 bottom-0 h-0.5 origin-center rounded-t-ui-full transition-transform duration-ui-normal ease-ui-emphasized motion-reduce:transition-none",
-                        isFragmentLibrary ? "bg-[#7654ca]" : "bg-primary",
-                        selected ? "scale-x-100" : "scale-x-0",
-                      )}
-                    />
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
           <section
             aria-hidden={reviewOpen || activeWorkspaceSection !== "editor"}
             aria-labelledby="file-editor-tab"
@@ -1817,26 +1949,16 @@ export default function App(): JSX.Element {
             id="file-editor-panel"
             role="tabpanel"
           >
-            <div className="mb-ui-3 flex min-h-12 items-center justify-between gap-ui-4 border-b border-ui-border pb-ui-3">
-              <div className="min-w-0">
-                <h2 className="m-0 truncate text-base font-bold text-foreground">
-                  {selectedPath ? selectedPath.split("/").pop() : "请选择文件"}
-                </h2>
-                <div className="mt-1 truncate text-xs text-subtle-foreground">
-                  {selectedPath || "从左侧文件资源中选择要查看的文件"}
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
-                <Badge
-                  className={isFragmentLibrary ? "bg-[#eee9fb] text-[#6848b8]" : undefined}
-                  variant={isFragmentLibrary ? "neutral" : "primary"}
-                >
-                  {activeEnvironment?.label ?? "未选择环境"}
-                </Badge>
-                {hasPendingChanges ? <Badge variant="warning">有未提交修改</Badge> : null}
-                {isProtectedFileReadOnly ? <Badge variant="warning">普通用户只读</Badge> : null}
-              </div>
-            </div>
+            <FileWorkspaceHeader isReadOnly={isProtectedFileReadOnly} selectedPath={selectedPath} />
+            <WorkspaceSectionTabs
+              activeSection={activeWorkspaceSection}
+              onChange={(section) => {
+                setActiveWorkspaceSection(section);
+                if (section === "editor") {
+                  window.requestAnimationFrame(() => editorViewRef.current?.requestMeasure());
+                }
+              }}
+            />
 
             {fileConflict ? (
               <div className="mb-3 grid gap-2 rounded-lg border border-[#c94a35]/20 bg-[#c94a35]/10 px-3 py-2 text-sm text-[#79301f]">
@@ -1880,19 +2002,13 @@ export default function App(): JSX.Element {
               </div>
             ) : null}
 
-            <div
-              className={cn(
-                "flex min-h-[42px] min-w-0 items-center justify-between gap-ui-3 border-y border-ui-border px-ui-2 py-ui-1",
-                isFragmentLibrary ? "bg-[#faf9fd]" : "bg-surface-subtle",
-              )}
-            >
-              <div className="flex shrink-0 items-center gap-ui-2 pl-ui-2">
-                <span className="text-xs font-semibold text-muted-foreground">编辑模式</span>
+            <div className="flex min-h-[42px] min-w-0 items-center justify-between gap-ui-3 rounded-t-ui-md border border-ui-border bg-surface-subtle px-ui-2 py-0.5">
+              <div className="flex shrink-0 items-center pl-ui-1">
                 <SegmentedControl
                   ariaLabel="编辑模式"
-                  className="w-[148px] shrink-0"
+                  className="w-[124px] shrink-0"
                   items={[
-                    { value: "editor", label: "纯编辑" },
+                    { value: "editor", label: "编辑" },
                     { value: "diff", label: "对比" },
                   ]}
                   onValueChange={setEditorViewMode}
@@ -1902,29 +2018,6 @@ export default function App(): JSX.Element {
                 />
               </div>
               <div className="flex min-w-0 items-center gap-ui-1">
-                {editorViewMode === "diff" ? (
-                  <div
-                    className="mr-ui-1 flex items-center gap-ui-1 border-r border-ui-border pr-ui-2"
-                    aria-label="差异导航"
-                  >
-                    <Button
-                      onClick={() => goToAdjacentChange(-1)}
-                      disabled={!selectedPath}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      ↑ 上个差异
-                    </Button>
-                    <Button
-                      onClick={() => goToAdjacentChange(1)}
-                      disabled={!selectedPath}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      ↓ 下个差异
-                    </Button>
-                  </div>
-                ) : null}
                 {pendingReplay && editorViewMode === "editor" ? (
                   <Button
                     onClick={replayExtractedChange}
@@ -1935,30 +2028,130 @@ export default function App(): JSX.Element {
                     重放修改 {pendingReplay.hash.slice(0, 8)}
                   </Button>
                 ) : null}
-                <Button
+                <ToolbarIconButton
                   aria-expanded={editorSearchOpen}
+                  className={editorSearchOpen ? "bg-primary-soft text-primary" : undefined}
                   onClick={() =>
                     editorSearchOpen ? editorSearchController.close() : openEditorSearch()
                   }
                   disabled={!selectedPath}
-                  size="sm"
-                  variant={editorSearchOpen ? "primary" : "secondary"}
+                  label={`搜索内容（${shortcutModifier}F）`}
+                  variant="ghost"
                 >
-                  搜索内容
-                  <kbd className={searchShortcutClass}>{shortcutModifier}F</kbd>
-                </Button>
-                <Button
+                  <svg
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="1.8"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle cx="11" cy="11" r="6.5" />
+                    <path d="m16 16 4 4" />
+                  </svg>
+                </ToolbarIconButton>
+                <ToolbarIconButton
                   onClick={isFragmentLibrary ? formatEditorAsXml : validateEditorAsYaml}
                   disabled={!selectedPath}
-                  size="sm"
-                  variant="secondary"
+                  label={isFragmentLibrary ? "格式化 XML" : "校验 YAML"}
+                  variant="ghost"
                 >
-                  {isFragmentLibrary ? "格式化 XML" : "校验 YAML"}
-                </Button>
+                  <svg
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="1.8"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3" />
+                    {isFragmentLibrary ? (
+                      <path d="m9 9-2 3 2 3M15 9l2 3-2 3M13 8l-2 8" />
+                    ) : (
+                      <path d="m8 12 2.5 2.5L16 9" />
+                    )}
+                  </svg>
+                </ToolbarIconButton>
+                {editorViewMode === "diff" ? (
+                  <div
+                    className="ml-ui-1 flex items-center gap-ui-1 border-l border-ui-border pl-ui-2"
+                    aria-label="差异导航"
+                  >
+                    <ToolbarIconButton
+                      onClick={() => goToAdjacentChange(-1)}
+                      disabled={!selectedPath}
+                      label="上个差异"
+                      variant="ghost"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="m7 14 5-5 5 5" />
+                      </svg>
+                    </ToolbarIconButton>
+                    <ToolbarIconButton
+                      onClick={() => goToAdjacentChange(1)}
+                      disabled={!selectedPath}
+                      label="下个差异"
+                      variant="ghost"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="m7 10 5 5 5-5" />
+                      </svg>
+                    </ToolbarIconButton>
+                  </div>
+                ) : null}
+                {isFragmentLibrary ? (
+                  <span
+                    className="ml-ui-1 inline-flex border-l border-ui-border pl-ui-2"
+                    title={
+                      !selectedPath
+                        ? "请先选择一个片段"
+                        : hasPendingChanges
+                          ? "请先提交当前片段，再执行批量替换"
+                          : fragmentFileOperation
+                            ? "正在处理片段文件"
+                            : undefined
+                    }
+                  >
+                    <Button
+                      disabled={!selectedPath || hasPendingChanges || fragmentFileOperation}
+                      onClick={() => setActiveDialog({ type: "fragment-batch" })}
+                      variant="primary"
+                    >
+                      批量替换
+                    </Button>
+                  </span>
+                ) : null}
               </div>
             </div>
 
-            <div className="relative mt-ui-2 min-h-0 flex-1 overflow-hidden rounded-ui-md border border-ui-border">
+            <div
+              className={cn(
+                "relative min-h-0 flex-1 overflow-hidden border border-t-0 border-ui-border",
+                !fileValidationError && !hasPendingChanges && "rounded-b-ui-md",
+              )}
+            >
               {editorSearchOpen ? (
                 <div
                   className={cn(
@@ -2076,17 +2269,19 @@ export default function App(): JSX.Element {
             </div>
 
             {fileValidationError ? (
-              <div className="mt-ui-2 flex items-start gap-ui-2 rounded-ui-md border border-danger/15 bg-danger-soft px-ui-3 py-ui-2 text-sm text-danger">
+              <div
+                className={cn(
+                  "flex items-start gap-ui-2 border border-t-0 border-danger/15 bg-danger-soft px-ui-3 py-ui-2 text-sm text-danger",
+                  !hasPendingChanges && "rounded-b-ui-md",
+                )}
+              >
                 <strong className="shrink-0">格式校验未通过</strong>
                 <span className="min-w-0 break-words">{fileValidationError}</span>
               </div>
             ) : null}
 
             {hasPendingChanges ? (
-              <div className="mt-ui-2 grid grid-cols-[minmax(160px,0.75fr)_minmax(260px,1.3fr)_auto] items-center gap-ui-2 rounded-ui-md border border-ui-border-strong bg-surface px-ui-3 py-ui-2 shadow-ui-sm">
-                <div className="min-w-0">
-                  <strong className="block text-sm text-foreground">当前文件有未提交修改</strong>
-                </div>
+              <div className="grid grid-cols-[minmax(260px,1fr)_auto] items-center gap-ui-2 rounded-b-ui-md border border-t-0 border-ui-border bg-surface px-ui-3 py-ui-2">
                 <textarea
                   className={cn(inputClass, "min-h-9 resize-none py-ui-2 text-sm")}
                   disabled={isProtectedFileReadOnly}
@@ -2104,11 +2299,14 @@ export default function App(): JSX.Element {
                 />
                 <div className="flex items-center gap-ui-2">
                   <Button
-                    variant="danger"
+                    className="text-muted-foreground hover:bg-danger-soft hover:text-danger"
+                    variant="ghost"
                     onClick={() => void discardCurrentFile()}
                     disabled={!canDiscardCurrentFile || discarding}
+                    size="sm"
+                    title="丢弃当前文件的全部未提交修改"
                   >
-                    {discarding ? "丢弃中..." : "丢弃修改"}
+                    {discarding ? "丢弃中..." : "丢弃"}
                   </Button>
                   <Button
                     variant="primary"
@@ -2125,11 +2323,7 @@ export default function App(): JSX.Element {
                   </Button>
                 </div>
               </div>
-            ) : (
-              <div className="mt-ui-2 flex min-h-[54px] items-center justify-between rounded-ui-md border border-ui-border bg-surface-subtle px-ui-3 text-xs text-muted-foreground">
-                <span>{selectedPath ? "当前文件没有未提交修改" : "选择文件后可开始编辑"}</span>
-              </div>
-            )}
+            ) : null}
           </section>
 
           <section
@@ -2143,36 +2337,20 @@ export default function App(): JSX.Element {
             id="file-history-panel"
             role="tabpanel"
           >
-            <div className="mb-ui-3 flex min-h-12 items-center justify-between gap-ui-4 border-b border-ui-border pb-ui-3">
-              <div className="min-w-0">
-                <h2 className="m-0 truncate text-base font-bold text-foreground">
-                  {selectedPath ? selectedPath.split("/").pop() : "请选择文件"}
-                </h2>
-                <div className="mt-1 truncate text-xs text-subtle-foreground">
-                  {selectedPath || "从左侧文件资源中选择要查看的文件"}
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
-                <Badge
-                  className={isFragmentLibrary ? "bg-[#eee9fb] text-[#6848b8]" : undefined}
-                  variant={isFragmentLibrary ? "neutral" : "primary"}
-                >
-                  {activeEnvironment?.label ?? "未选择环境"}
-                </Badge>
-                <Badge variant="neutral">
-                  {fileHistory.length ? `最近 ${fileHistory.length} 次提交` : "暂无提交记录"}
-                </Badge>
-              </div>
-            </div>
+            <FileWorkspaceHeader isReadOnly={isProtectedFileReadOnly} selectedPath={selectedPath} />
+            <WorkspaceSectionTabs
+              activeSection={activeWorkspaceSection}
+              onChange={(section) => {
+                setActiveWorkspaceSection(section);
+                if (section === "editor") {
+                  window.requestAnimationFrame(() => editorViewRef.current?.requestMeasure());
+                }
+              }}
+            />
 
             {selectedHistory ? (
               <div className="grid min-h-0 flex-1 gap-3 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
-                <div
-                  className={cn(
-                    "flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#183039]/10",
-                    isFragmentLibrary ? "bg-[#faf9fd]" : "bg-[#f6f9f7]/85",
-                  )}
-                >
+                <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-ui-border bg-surface-subtle">
                   <div className="border-b border-[#183039]/10 px-3 py-2 text-sm font-semibold text-[#20404a]">
                     历史提交
                   </div>

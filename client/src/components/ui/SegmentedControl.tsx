@@ -14,7 +14,7 @@ export interface SegmentedControlProps<T extends string> {
   items: ReadonlyArray<SegmentedControlItem<T>>;
   onValueChange: (value: T) => void;
   size?: "sm" | "md";
-  tone?: "brand" | "fragment" | "neutral";
+  tone?: "brand" | "neutral";
   value: T;
 }
 
@@ -45,9 +45,7 @@ export function SegmentedControl<T extends string>({
         "relative isolate grid gap-ui-1 overflow-hidden p-ui-1",
         tone === "neutral"
           ? "rounded-[16px] border border-transparent bg-[#f3f3f3] shadow-none"
-          : tone === "fragment"
-            ? "rounded-ui-md border border-[#7654ca]/10 bg-[#f4f1fa] shadow-ui-inset"
-            : "rounded-ui-md border border-primary/10 bg-surface-muted shadow-ui-inset",
+          : "rounded-ui-md border border-primary/10 bg-surface-muted shadow-ui-inset",
         className
       )}
       onValueChange={(nextValue) => {
@@ -66,9 +64,7 @@ export function SegmentedControl<T extends string>({
           "pointer-events-none absolute bottom-ui-1 left-ui-1 top-ui-1 z-0 rounded-ui-sm shadow-ui-sm transition-transform duration-ui-slow ease-ui-emphasized motion-reduce:transition-none",
           tone === "brand"
             ? "bg-primary"
-            : tone === "fragment"
-              ? "bg-[#7654ca]"
-              : "rounded-[12px] bg-white shadow-[0_2px_8px_rgb(0_0_0/0.14)]"
+            : "rounded-[12px] bg-white shadow-[0_2px_8px_rgb(0_0_0/0.14)]"
         )}
         style={indicatorStyle}
       />
