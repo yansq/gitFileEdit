@@ -1,4 +1,5 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
 import { MergeView } from "@codemirror/merge";
 import {
@@ -14,6 +15,11 @@ import {
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import type { ConfigEditorValidationIssue } from "./ConfigEditor";
+import {
+  editorHighlightStyle,
+  editorLanguageForPath,
+  type EditorLanguageMode,
+} from "./editorPresentation";
 
 const mergeEditorTheme = EditorView.theme({
   "&": { background: "transparent", color: "#1f2937", height: "100%" },
@@ -50,6 +56,8 @@ function validationDecorations(issue: ConfigEditorValidationIssue | null) {
 }
 
 export function MergeConfigEditor(props: {
+  filePath: string;
+  languageMode?: EditorLanguageMode;
   original: string;
   value: string;
   disabled: boolean;
@@ -67,6 +75,8 @@ export function MergeConfigEditor(props: {
   const onChangeRef = useRef(props.onChange);
   const disabledCompartmentRef = useRef(new Compartment());
   const validationCompartmentRef = useRef(new Compartment());
+  const originalLanguageCompartmentRef = useRef(new Compartment());
+  const editableLanguageCompartmentRef = useRef(new Compartment());
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
@@ -81,6 +91,10 @@ export function MergeConfigEditor(props: {
         extensions: [
           lineNumbers(),
           mergeEditorTheme,
+          syntaxHighlighting(editorHighlightStyle, { fallback: true }),
+          originalLanguageCompartmentRef.current.of(
+            editorLanguageForPath(props.filePath, props.languageMode),
+          ),
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
           EditorView.lineWrapping
@@ -97,6 +111,10 @@ export function MergeConfigEditor(props: {
           drawSelection(),
           placeholder(props.placeholderText),
           mergeEditorTheme,
+          syntaxHighlighting(editorHighlightStyle, { fallback: true }),
+          editableLanguageCompartmentRef.current.of(
+            editorLanguageForPath(props.filePath, props.languageMode),
+          ),
           disabledCompartmentRef.current.of([
             EditorState.readOnly.of(props.disabled),
             EditorView.editable.of(!props.disabled)
@@ -159,6 +177,18 @@ export function MergeConfigEditor(props: {
       ])
     });
   }, [props.disabled]);
+
+  useEffect(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    const language = editorLanguageForPath(props.filePath, props.languageMode);
+    merge.a.dispatch({
+      effects: originalLanguageCompartmentRef.current.reconfigure(language)
+    });
+    merge.b.dispatch({
+      effects: editableLanguageCompartmentRef.current.reconfigure(language)
+    });
+  }, [props.filePath, props.languageMode]);
 
   useEffect(() => {
     const merge = mergeRef.current;

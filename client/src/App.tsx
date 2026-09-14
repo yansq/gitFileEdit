@@ -2223,6 +2223,8 @@ export default function App(): JSX.Element {
                     className="relative h-full min-h-0 overflow-hidden bg-[#fafcfb]/95"
                   >
                     <LazyMergeConfigEditor
+                      filePath={selectedPath}
+                      languageMode={isFragmentLibrary ? "xml" : "auto"}
                       original={pendingBaseContent}
                       value={editorContent}
                       disabled={!selectedPath || isProtectedFileReadOnly}
@@ -2249,6 +2251,7 @@ export default function App(): JSX.Element {
                     >
                       <LazyConfigEditor
                         filePath={selectedPath}
+                        languageMode={isFragmentLibrary ? "xml" : "auto"}
                         value={editorContent}
                         disabled={!selectedPath || isProtectedFileReadOnly}
                         placeholderText="请选择要编辑的文件"
