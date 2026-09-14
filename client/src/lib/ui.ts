@@ -11,7 +11,7 @@ export const panelTitleRowClass = "mb-3 flex items-center justify-between gap-2"
 export const secondaryButtonClass =
   "rounded-lg border-0 bg-[#143138]/[0.08] px-3 py-2 text-[#183039] transition duration-200 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 motion-reduce:hover:translate-y-0 motion-reduce:transition-none";
 export const primaryButtonClass =
-  "rounded-lg border-0 bg-gradient-to-br from-[#0e6b72] to-[#1e8f6b] px-3 py-2 text-white shadow-[0_12px_28px_rgba(18,118,112,0.22)] transition duration-200 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 motion-reduce:hover:translate-y-0 motion-reduce:transition-none";
+  "rounded-lg border-0 bg-gradient-to-br from-primary to-[rgb(var(--color-primary-gradient-end))] px-3 py-2 text-white shadow-[0_12px_28px_rgb(var(--color-primary-shadow)/0.22)] transition duration-200 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 motion-reduce:hover:translate-y-0 motion-reduce:transition-none";
 export const formRowClass = "mb-3 grid gap-1.5";
 export const formLabelClass = "text-sm font-semibold text-[#223841]";
 export const inputClass =

@@ -115,7 +115,12 @@ function FileTreeRow(props: {
             {props.onRename ? (
               <button
                 aria-label={`重命名 ${props.node.name}`}
-                className="rounded-lg p-1 text-[#60767c] hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
+                className={cn(
+                  "rounded-lg p-1 text-[#60767c]",
+                  props.tone === "fragment"
+                    ? "hover:bg-[#7654ca]/10 hover:text-[#6848b8]"
+                    : "hover:bg-[#0e6b72]/10 hover:text-[#0e6b72]"
+                )}
                 onClick={() => props.onRename?.(props.node.path)}
                 title="重命名"
                 type="button"

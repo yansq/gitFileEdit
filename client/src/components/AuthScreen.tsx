@@ -1,5 +1,13 @@
 import type { FormEvent } from "react";
-import { cn, formLabelClass, formRowClass, inputClass, panelClass, primaryButtonClass, secondaryButtonClass } from "../lib/ui";
+import {
+  cn,
+  formLabelClass,
+  formRowClass,
+  inputClass,
+  panelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "../lib/ui";
 
 export interface LoginFormState {
   username: string;
@@ -20,12 +28,9 @@ export function AuthScreen(props: {
 
   return (
     <div className="grid min-h-screen place-items-center p-4">
-      <form
-        className={cn(panelClass, "w-full max-w-[420px]")}
-        onSubmit={props.onSubmit}
-      >
+      <form className={cn(panelClass, "w-full max-w-[420px]")} onSubmit={props.onSubmit}>
         <h1 className="m-0 text-3xl leading-tight">
-          {isRegistering ? "注册账号（请使用真实姓名或工号）" : "登录后修改配置"}
+          {isRegistering ? "注册账号（请使用真实姓名或工号）" : "配置工作台"}
         </h1>
         <div className="mt-4 grid gap-3">
           <label className={formRowClass}>
@@ -37,7 +42,7 @@ export function AuthScreen(props: {
               onChange={(event) =>
                 props.onFormChange({
                   ...props.loginForm,
-                  username: event.target.value
+                  username: event.target.value,
                 })
               }
             />
@@ -52,7 +57,7 @@ export function AuthScreen(props: {
               onChange={(event) =>
                 props.onFormChange({
                   ...props.loginForm,
-                  password: event.target.value
+                  password: event.target.value,
                 })
               }
             />
@@ -68,7 +73,7 @@ export function AuthScreen(props: {
                 onChange={(event) =>
                   props.onFormChange({
                     ...props.loginForm,
-                    confirmPassword: event.target.value
+                    confirmPassword: event.target.value,
                   })
                 }
               />
@@ -96,11 +101,7 @@ export function AuthScreen(props: {
                 ? "注册并登录"
                 : "登录"}
           </button>
-          <button
-            className={secondaryButtonClass}
-            type="button"
-            onClick={props.onModeToggle}
-          >
+          <button className={secondaryButtonClass} type="button" onClick={props.onModeToggle}>
             {isRegistering ? "已有账号，去登录" : "没有账号，去注册"}
           </button>
         </div>

@@ -42,7 +42,12 @@ export function SegmentedControl<T extends string>({
     <ToggleGroup.Root
       aria-label={ariaLabel}
       className={cn(
-        "relative isolate grid gap-ui-1 overflow-hidden rounded-ui-md border border-primary/10 bg-surface-muted p-ui-1 shadow-ui-inset",
+        "relative isolate grid gap-ui-1 overflow-hidden p-ui-1",
+        tone === "neutral"
+          ? "rounded-[16px] border border-transparent bg-[#f3f3f3] shadow-none"
+          : tone === "fragment"
+            ? "rounded-ui-md border border-[#7654ca]/10 bg-[#f4f1fa] shadow-ui-inset"
+            : "rounded-ui-md border border-primary/10 bg-surface-muted shadow-ui-inset",
         className
       )}
       onValueChange={(nextValue) => {
@@ -63,7 +68,7 @@ export function SegmentedControl<T extends string>({
             ? "bg-primary"
             : tone === "fragment"
               ? "bg-[#7654ca]"
-              : "bg-surface"
+              : "rounded-[12px] bg-white shadow-[0_2px_8px_rgb(0_0_0/0.14)]"
         )}
         style={indicatorStyle}
       />
@@ -79,9 +84,11 @@ export function SegmentedControl<T extends string>({
                 : "h-8 text-[length:var(--font-size-ui-sm)] leading-[var(--line-height-ui-sm)]",
               selected
                 ? tone === "neutral"
-                  ? "text-foreground"
+                  ? "text-[#111111]"
                   : "text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                : tone === "neutral"
+                  ? "font-medium text-[#666666] hover:text-[#333333]"
+                  : "text-muted-foreground hover:text-foreground"
             )}
             disabled={item.disabled}
             key={item.value}

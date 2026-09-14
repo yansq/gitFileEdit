@@ -19,6 +19,8 @@
     --color-primary-active: 9 76 82;
     --color-primary-foreground: 255 255 255;
     --color-primary-soft: 230 243 241;
+    --color-primary-gradient-end: 30 143 107;
+    --color-primary-shadow: 18 118 112;
     --color-success: 29 140 104;
     --color-success-soft: 231 246 239;
     --color-warning: 157 105 31;
@@ -72,6 +74,23 @@
     -moz-osx-font-smoothing: grayscale;
     color: #18242d;
     background: rgb(var(--color-canvas));
+  }
+
+  .fragment-theme {
+    --color-primary: 104 72 184;
+    --color-primary-hover: 92 63 166;
+    --color-primary-active: 80 54 146;
+    --color-primary-soft: 238 233 251;
+    --color-primary-gradient-end: 118 84 202;
+    --color-primary-shadow: 104 72 184;
+  }
+
+  .fragment-theme .cm-editor.cm-focused .cm-activeLine {
+    background-color: rgb(var(--color-primary) / 0.08);
+  }
+
+  .fragment-theme .cm-editor.cm-focused .cm-activeLineGutter {
+    background-color: rgb(var(--color-primary) / 0.12);
   }
 
   html {

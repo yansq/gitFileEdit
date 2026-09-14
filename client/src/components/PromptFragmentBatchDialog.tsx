@@ -196,7 +196,7 @@ export function PromptFragmentBatchDialog(props: {
                   className={cn(
                     "inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
                     activeFilter === filter
-                      ? "bg-[#0e6b72] text-white shadow-sm"
+                      ? "bg-primary text-white shadow-sm"
                       : "text-[#53676e] hover:bg-white/80 hover:text-[#183039]"
                   )}
                   key={String(filter)}
