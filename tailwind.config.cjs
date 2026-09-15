@@ -25,6 +25,10 @@ module.exports = {
           foreground: "rgb(var(--color-primary-foreground) / <alpha-value>)",
           soft: "rgb(var(--color-primary-soft) / <alpha-value>)"
         },
+        workspace: {
+          DEFAULT: "rgb(var(--color-workspace) / <alpha-value>)",
+          soft: "rgb(var(--color-workspace-soft) / <alpha-value>)"
+        },
         success: {
           DEFAULT: "rgb(var(--color-success) / <alpha-value>)",
           soft: "rgb(var(--color-success-soft) / <alpha-value>)"

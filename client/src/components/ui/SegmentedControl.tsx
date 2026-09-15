@@ -44,7 +44,7 @@ export function SegmentedControl<T extends string>({
       className={cn(
         "relative isolate grid gap-ui-1 overflow-hidden p-ui-1",
         tone === "neutral"
-          ? "rounded-[16px] border border-transparent bg-[#f3f3f3] shadow-none"
+          ? "rounded-[16px] border border-transparent bg-surface-muted shadow-none"
           : "rounded-ui-md border border-primary/10 bg-surface-muted shadow-ui-inset",
         className
       )}
@@ -64,7 +64,7 @@ export function SegmentedControl<T extends string>({
           "pointer-events-none absolute bottom-ui-1 left-ui-1 top-ui-1 z-0 rounded-ui-sm shadow-ui-sm transition-transform duration-ui-slow ease-ui-emphasized motion-reduce:transition-none",
           tone === "brand"
             ? "bg-primary"
-            : "rounded-[12px] bg-white shadow-[0_2px_8px_rgb(0_0_0/0.14)]"
+            : "rounded-[12px] bg-surface shadow-ui-sm"
         )}
         style={indicatorStyle}
       />
@@ -80,10 +80,10 @@ export function SegmentedControl<T extends string>({
                 : "h-8 text-[length:var(--font-size-ui-sm)] leading-[var(--line-height-ui-sm)]",
               selected
                 ? tone === "neutral"
-                  ? "text-[#111111]"
+                  ? "text-foreground"
                   : "text-primary-foreground"
                 : tone === "neutral"
-                  ? "font-medium text-[#666666] hover:text-[#333333]"
+                  ? "font-medium text-muted-foreground hover:text-foreground"
                   : "text-muted-foreground hover:text-foreground"
             )}
             disabled={item.disabled}

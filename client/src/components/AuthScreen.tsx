@@ -5,9 +5,8 @@ import {
   formRowClass,
   inputClass,
   panelClass,
-  primaryButtonClass,
-  secondaryButtonClass,
 } from "../lib/ui";
+import { Button } from "./ui";
 
 export interface LoginFormState {
   username: string;
@@ -80,12 +79,13 @@ export function AuthScreen(props: {
             </label>
           ) : null}
           {props.error ? (
-            <div className="rounded-lg bg-[#c94a35]/10 px-3 py-2 text-sm text-[#8d3322]">
+            <div className="rounded-ui-md bg-danger-soft px-3 py-2 text-sm text-danger">
               {props.error}
             </div>
           ) : null}
-          <button
-            className={primaryButtonClass}
+          <Button
+            variant="primary"
+            type="submit"
             disabled={
               !props.loginForm.username ||
               !props.loginForm.password ||
@@ -100,10 +100,10 @@ export function AuthScreen(props: {
               : isRegistering
                 ? "注册并登录"
                 : "登录"}
-          </button>
-          <button className={secondaryButtonClass} type="button" onClick={props.onModeToggle}>
+          </Button>
+          <Button variant="secondary" type="button" onClick={props.onModeToggle}>
             {isRegistering ? "已有账号，去登录" : "没有账号，去注册"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

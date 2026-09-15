@@ -20,6 +20,8 @@
     --color-primary-foreground: 255 255 255;
     --color-primary-soft: 230 243 241;
     --color-primary-shadow: 40 127 123;
+    --color-workspace: 80 103 124;
+    --color-workspace-soft: 232 238 245;
     --color-success: 29 140 104;
     --color-success-soft: 231 246 239;
     --color-warning: 157 105 31;
@@ -27,6 +29,12 @@
     --color-danger: 159 47 32;
     --color-danger-hover: 130 38 26;
     --color-danger-soft: 252 235 231;
+    --color-syntax-comment: 138 148 163;
+    --color-syntax-keyword: 80 103 124;
+    --color-syntax-property: 63 100 119;
+    --color-syntax-string: 40 127 123;
+    --color-syntax-number: 139 102 63;
+    --color-syntax-punctuation: 107 114 128;
 
     --radius-ui-xs: 4px;
     --radius-ui-sm: 6px;

@@ -53,17 +53,17 @@ function FileTreeRow(props: {
         <button
           type="button"
           className={cn(
-            "flex min-h-[34px] w-full items-center gap-1.5 rounded-ui-sm px-1.5 text-left text-[15px] font-semibold text-[#24292f] transition-colors motion-reduce:transition-none",
+            "flex min-h-[34px] w-full items-center gap-1.5 rounded-ui-sm px-1.5 text-left text-[15px] font-semibold text-foreground transition-colors motion-reduce:transition-none",
             "hover:bg-surface-muted hover:text-foreground",
-            containsSelected && "text-[#111827]"
+            containsSelected && "text-foreground"
           )}
           onClick={() => setOpen((current) => !current)}
           style={{ paddingLeft: `${indent}px` }}
         >
           <span
             className={cn(
-              "w-6 shrink-0 text-center text-3xl font-light leading-none text-[#8a8f94] transition-transform",
-              isOpen && "rotate-90 text-[#24292f]"
+              "w-6 shrink-0 text-center text-3xl font-light leading-none text-subtle-foreground transition-transform",
+              isOpen && "rotate-90 text-foreground"
             )}
           >
             ›
@@ -89,7 +89,7 @@ function FileTreeRow(props: {
   return (
     <div
       className={cn(
-        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-ui-sm px-1.5 text-[15px] text-[#24292f] transition-colors motion-reduce:transition-none",
+        "group grid min-h-[34px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-ui-sm px-1.5 text-[15px] text-foreground transition-colors motion-reduce:transition-none",
         "hover:bg-surface-muted hover:text-foreground",
         props.selectedPath === props.node.path &&
           "bg-primary-soft font-semibold text-primary"
@@ -105,7 +105,7 @@ function FileTreeRow(props: {
         {props.node.name}
       </button>
       <div className="hidden items-center gap-1 group-hover:flex">
-        <span className="text-xs font-normal text-[#7a8b91]">
+        <span className="text-xs font-normal text-subtle-foreground">
           {props.node.file ? formatSize(props.node.file.size) : ""}
         </span>
         {hasActions ? (
@@ -114,7 +114,7 @@ function FileTreeRow(props: {
               <button
                 aria-label={`重命名 ${props.node.name}`}
                 className={cn(
-                  "rounded-lg p-1 text-[#60767c]",
+                  "rounded-ui-sm p-1 text-muted-foreground",
                   "hover:bg-surface-muted hover:text-foreground"
                 )}
                 onClick={() => props.onRename?.(props.node.path)}
@@ -130,7 +130,7 @@ function FileTreeRow(props: {
             {props.onDelete ? (
               <button
                 aria-label={`删除 ${props.node.name}`}
-                className="rounded-lg p-1 text-[#9f2f20] hover:bg-[#c94a35]/10"
+                className="rounded-ui-sm p-1 text-danger hover:bg-danger-soft"
                 onClick={() => props.onDelete?.(props.node.path)}
                 title="删除"
                 type="button"

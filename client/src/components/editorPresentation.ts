@@ -10,13 +10,13 @@ export const editorFontFamily =
   '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", "Microsoft YaHei", "Liberation Mono", monospace';
 
 export const editorHighlightStyle = HighlightStyle.define([
-  { tag: tags.comment, color: "#8a94a3" },
-  { tag: [tags.keyword, tags.typeName, tags.className], color: "#50677c", fontWeight: "600" },
-  { tag: [tags.propertyName, tags.attributeName], color: "#3f6477" },
-  { tag: [tags.tagName, tags.string, tags.regexp], color: "#287f7b" },
-  { tag: [tags.number, tags.bool, tags.null], color: "#8b663f" },
-  { tag: [tags.operator, tags.punctuation, tags.separator, tags.bracket], color: "#6b7280" },
-  { tag: tags.invalid, color: "#9f2f20", textDecoration: "underline wavy" },
+  { tag: tags.comment, color: "rgb(var(--color-syntax-comment))" },
+  { tag: [tags.keyword, tags.typeName, tags.className], color: "rgb(var(--color-syntax-keyword))", fontWeight: "600" },
+  { tag: [tags.propertyName, tags.attributeName], color: "rgb(var(--color-syntax-property))" },
+  { tag: [tags.tagName, tags.string, tags.regexp], color: "rgb(var(--color-syntax-string))" },
+  { tag: [tags.number, tags.bool, tags.null], color: "rgb(var(--color-syntax-number))" },
+  { tag: [tags.operator, tags.punctuation, tags.separator, tags.bracket], color: "rgb(var(--color-syntax-punctuation))" },
+  { tag: tags.invalid, color: "rgb(var(--color-danger))", textDecoration: "underline wavy" },
 ]);
 
 export function editorLanguageForPath(

@@ -67,7 +67,7 @@ function DiffViewContent(props: {
         ref={props.scrollRef}
         className={cn(
           scrollable ? "overflow-auto" : "overflow-hidden",
-          "rounded-lg border border-[#183039]/10 bg-[#fafcfb]/95 p-3",
+          "rounded-ui-md border border-ui-border bg-surface-subtle/95 p-ui-3",
           props.className
         )}
       >
@@ -87,7 +87,7 @@ function DiffViewContent(props: {
       ref={props.scrollRef}
       className={cn(
         scrollable ? "overflow-auto" : "overflow-hidden",
-        "rounded-lg border border-[#183039]/10 bg-[#fafcfb]/95",
+        "rounded-ui-md border border-ui-border bg-surface-subtle/95",
         props.className
       )}
     >
@@ -95,7 +95,7 @@ function DiffViewContent(props: {
         className={cn(
           "grid auto-rows-min font-mono text-[13px] leading-[1.65]",
           display === "split"
-            ? "min-w-0 grid-cols-2 divide-x divide-[#183039]/10"
+            ? "min-w-0 grid-cols-2 divide-x divide-ui-border"
             : "min-w-0 grid-cols-1"
         )}
       >
@@ -157,23 +157,23 @@ function DiffCell(props: {
       data-after-line={props.dataAfterLine}
       className={cn(
         "grid min-w-0 grid-cols-[6px_23px_minmax(0,1fr)]",
-        props.type === "removed" && "bg-[#c94a35]/10",
-        props.type === "added" && "bg-[#1d8c68]/10",
-        props.type === "empty" && "bg-[repeating-linear-gradient(-45deg,transparent,transparent_5px,rgba(24,48,57,0.06)_5px,rgba(24,48,57,0.06)_7px)]",
-        props.highlighted && "bg-[#d8a21b]/20"
+        props.type === "removed" && "bg-danger/10",
+        props.type === "added" && "bg-success/10",
+        props.type === "empty" && "bg-[repeating-linear-gradient(-45deg,transparent,transparent_5px,rgb(var(--color-foreground)/0.06)_5px,rgb(var(--color-foreground)/0.06)_7px)]",
+        props.highlighted && "bg-warning/20"
       )}
     >
       <span
         aria-hidden="true"
         className={cn(
-          props.type === "removed" && "bg-[#c94a35]",
-          props.type === "added" && "bg-[#1d8c68]"
+          props.type === "removed" && "bg-danger",
+          props.type === "added" && "bg-success"
         )}
       />
-      <span className="select-none border-r border-[#183039]/10 pl-0.5 pr-1 text-right text-[12px] text-[#8b9aa1]">
+      <span className="select-none border-r border-ui-border pl-0.5 pr-1 text-right text-[12px] text-subtle-foreground">
         {props.line?.lineNumber ?? ""}
       </span>
-      <span className="min-w-0 break-words pl-3 pr-4 whitespace-pre-wrap text-[#2e444b]">
+      <span className="min-w-0 break-words pl-3 pr-4 whitespace-pre-wrap text-foreground">
         {props.line ? <VisibleWhitespace text={props.line.line.text} hasNewline={props.line.line.hasNewline} /> : " "}
       </span>
     </div>
@@ -195,15 +195,15 @@ function UnifiedDiffBlockView(props: {
     <div
       data-after-line={block.afterLineNumber ?? undefined}
       className={cn(
-        "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-lg px-1 py-0 font-mono text-[13px] leading-[1.65]",
-        isHighlighted && "bg-[#d8a21b]/20",
-        block.type === "added" && "bg-[#1d8c68]/10",
-        block.type === "removed" && "bg-[#c94a35]/10"
+        "grid min-w-0 grid-cols-[18px_8px_minmax(0,1fr)] gap-1 rounded-ui-md px-1 py-0 font-mono text-[13px] leading-[1.65]",
+        isHighlighted && "bg-warning/20",
+        block.type === "added" && "bg-success/10",
+        block.type === "removed" && "bg-danger/10"
       )}
     >
-      <span className="select-none text-right text-[12px] text-[#8b9aa1]">{block.lineNumber}</span>
-      <span className="select-none text-[#4a5b61]">{block.marker}</span>
-      <span className="min-w-0 break-words whitespace-pre-wrap text-[#2e444b]">
+      <span className="select-none text-right text-[12px] text-subtle-foreground">{block.lineNumber}</span>
+      <span className="select-none text-muted-foreground">{block.marker}</span>
+      <span className="min-w-0 break-words whitespace-pre-wrap text-foreground">
         <VisibleWhitespace text={block.line.text} hasNewline={block.line.hasNewline} />
       </span>
     </div>
@@ -326,7 +326,7 @@ function splitDiffLines(value: string): DiffLine[] {
 }
 
 function VisibleWhitespace(props: { text: string; hasNewline: boolean }): JSX.Element {
-  const whitespaceClass = "text-[#c2cdd1]";
+  const whitespaceClass = "text-ui-border-strong";
 
   return (
     <>
@@ -341,7 +341,7 @@ function VisibleWhitespace(props: { text: string; hasNewline: boolean }): JSX.El
           return char;
         })
         : !props.hasNewline ? " " : null}
-      {props.hasNewline ? <span className="ml-1 text-[#c2cdd1]">↵</span> : null}
+      {props.hasNewline ? <span className="ml-1 text-ui-border-strong">↵</span> : null}
     </>
   );
 }

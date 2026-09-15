@@ -6,7 +6,7 @@ function EnvironmentGlyph({ fragment }: { fragment: boolean }): JSX.Element {
   return (
     <span
       aria-hidden="true"
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-ui-sm bg-[#e8eef5] text-[#50677c]"
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-ui-sm bg-workspace-soft text-workspace"
     >
       {fragment ? (
         <svg className="h-[17px] w-[17px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -25,7 +25,7 @@ function EnvironmentGlyph({ fragment }: { fragment: boolean }): JSX.Element {
 function EnvironmentTypeBadge({ fragment }: { fragment: boolean }): JSX.Element {
   return (
     <span
-      className="shrink-0 rounded-ui-full bg-[#e8eef5] px-2 py-0.5 text-[11px] font-medium leading-4 text-[#50677c]"
+      className="shrink-0 rounded-ui-full bg-workspace-soft px-2 py-0.5 text-[11px] font-medium leading-4 text-workspace"
     >
       {fragment ? "片段库" : "配置"}
     </span>

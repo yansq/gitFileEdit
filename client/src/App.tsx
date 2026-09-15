@@ -20,7 +20,7 @@ import { FileTree } from "./components/FileTree";
 import { PromptFragmentBatchDialog } from "./components/PromptFragmentBatchDialog";
 import { PromptFragmentFileDialog } from "./components/PromptFragmentFileDialog";
 import { ToastStack } from "./components/ToastStack";
-import { Badge, Button, IconButton, SegmentedControl } from "./components/ui";
+import { Badge, Button, IconButton, Modal, SegmentedControl } from "./components/ui";
 import { useAuthSession } from "./features/auth/useAuthSession";
 import { useFileEditor, validateEditorContent } from "./features/editor/useFileEditor";
 import { useFileHistory } from "./features/history/useFileHistory";
@@ -37,8 +37,6 @@ import {
   formRowClass,
   inputClass,
   panelTitleRowClass,
-  primaryButtonClass,
-  secondaryButtonClass,
   workspaceWindowClass,
 } from "./lib/ui";
 import type {
@@ -112,7 +110,7 @@ function LazyDiffView(props: ComponentProps<typeof DiffView>): JSX.Element {
 
 function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Element {
   return (
-    <Suspense fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载编辑器...</div>}>
+    <Suspense fallback={<div className="h-full p-4 text-sm text-muted-foreground">正在加载编辑器...</div>}>
       <ConfigEditor {...props} />
     </Suspense>
   );
@@ -121,7 +119,7 @@ function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Eleme
 function LazyMergeConfigEditor(props: ComponentProps<typeof MergeConfigEditor>): JSX.Element {
   return (
     <Suspense
-      fallback={<div className="h-full p-4 text-sm text-[#6c7d84]">正在加载差异编辑器...</div>}
+      fallback={<div className="h-full p-4 text-sm text-muted-foreground">正在加载差异编辑器...</div>}
     >
       <MergeConfigEditor {...props} />
     </Suspense>
@@ -151,7 +149,7 @@ function ToolbarIconButton({ label, ...props }: ComponentProps<typeof IconButton
     <span className="group/toolbar-action relative inline-flex">
       <IconButton label={label} {...props} />
       <span
-        className="pointer-events-none invisible absolute right-0 top-[calc(100%+8px)] z-40 w-max max-w-56 translate-y-[-2px] rounded-ui-xs bg-foreground px-ui-2 py-ui-1 text-[11px] font-medium leading-4 text-white opacity-0 shadow-ui-sm transition-[opacity,transform] duration-ui-fast group-hover/toolbar-action:visible group-hover/toolbar-action:translate-y-0 group-hover/toolbar-action:opacity-100 group-focus-within/toolbar-action:visible group-focus-within/toolbar-action:translate-y-0 group-focus-within/toolbar-action:opacity-100 motion-reduce:transition-none"
+        className="pointer-events-none invisible absolute right-0 top-[calc(100%+8px)] z-40 w-max max-w-56 translate-y-[-2px] rounded-ui-xs bg-foreground px-ui-2 py-ui-1 text-[11px] font-medium leading-4 text-primary-foreground opacity-0 shadow-ui-sm transition-[opacity,transform] duration-ui-fast group-hover/toolbar-action:visible group-hover/toolbar-action:translate-y-0 group-hover/toolbar-action:opacity-100 group-focus-within/toolbar-action:visible group-focus-within/toolbar-action:translate-y-0 group-focus-within/toolbar-action:opacity-100 motion-reduce:transition-none"
         role="tooltip"
       >
         {label}
@@ -649,48 +647,6 @@ export default function App(): JSX.Element {
       stream.close();
     };
   }, [authUser, selectedPath, editorDirty]);
-
-  useEffect(() => {
-    if (!authUser || !message) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setMessage(null);
-    }, 3200);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [authUser, message]);
-
-  useEffect(() => {
-    if (!authUser || !liveNotice) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setLiveNotice(null);
-    }, 3200);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [authUser, liveNotice]);
-
-  useEffect(() => {
-    if (!authUser || !error) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setError(null);
-    }, 5200);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [authUser, error]);
 
   useEffect(() => {
     if (!resizingFileList) {
@@ -1312,7 +1268,7 @@ export default function App(): JSX.Element {
   }
 
   if (!authChecked) {
-    return <div className="p-7 text-[#43555d]">正在加载...</div>;
+    return <div className="p-7 text-muted-foreground">正在加载...</div>;
   }
 
   if (!authUser) {
@@ -1331,7 +1287,14 @@ export default function App(): JSX.Element {
 
   return (
     <div className="h-screen min-w-[1080px] overflow-hidden bg-canvas">
-      <ToastStack message={message} liveNotice={liveNotice} error={error} />
+      <ToastStack
+        error={error}
+        liveNotice={liveNotice}
+        message={message}
+        onDismissError={() => setError(null)}
+        onDismissLiveNotice={() => setLiveNotice(null)}
+        onDismissMessage={() => setMessage(null)}
+      />
       {confirmingCommit && !isProtectedFileReadOnly ? (
         <CommitConfirmDialog
           selectedPath={selectedPath}
@@ -1514,7 +1477,7 @@ export default function App(): JSX.Element {
               <div className="absolute right-0 z-30 mt-2 grid w-48 gap-1 rounded-ui-lg border border-ui-border bg-surface p-1.5 shadow-ui-overlay">
                 {authUser.role === "admin" ? (
                   <button
-                    className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                    className="rounded-ui-md border-0 bg-transparent px-ui-3 py-ui-2 text-left text-foreground hover:bg-surface-muted"
                     onClick={() => {
                       setOpenHeaderPopover(null);
                       void openEnvironmentSettings();
@@ -1525,7 +1488,7 @@ export default function App(): JSX.Element {
                   </button>
                 ) : null}
                 <button
-                  className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                  className="rounded-ui-md border-0 bg-transparent px-ui-3 py-ui-2 text-left text-foreground hover:bg-surface-muted"
                   onClick={() => {
                     setActiveDialog({ type: "activation" });
                     setOpenHeaderPopover(null);
@@ -1535,7 +1498,7 @@ export default function App(): JSX.Element {
                   输入激活码
                 </button>
                 <button
-                  className="rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[#183039] hover:bg-[#143138]/[0.08]"
+                  className="rounded-ui-md border-0 bg-transparent px-ui-3 py-ui-2 text-left text-foreground hover:bg-surface-muted"
                   onClick={() => void logoutCurrentUser()}
                   type="button"
                 >
@@ -1548,14 +1511,21 @@ export default function App(): JSX.Element {
       </header>
 
       {activationDialogOpen ? (
-        <div className="fixed inset-0 z-[100] grid place-items-center bg-[#10262b]/35 px-4">
+        <Modal
+          className="max-w-md p-ui-4"
+          closeDisabled={activatingAdmin}
+          labelledBy="activation-dialog-title"
+          onClose={() => {
+            setActiveDialog(null);
+            setActivationCode("");
+          }}
+        >
           <form
-            className="w-full max-w-md rounded-lg border border-slate-900/10 bg-white p-4 shadow-[0_28px_80px_rgba(16,38,43,0.24)]"
             onSubmit={(event) => void submitActivationCode(event)}
           >
             <div className="mb-4">
-              <h2 className="m-0 text-xl">输入激活码</h2>
-              <p className="mt-2 text-sm text-[#728188]">
+              <h2 className="m-0 text-xl" id="activation-dialog-title">输入激活码</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
                 激活码和当前账号绑定，校验成功后该账号会升级为管理员。
               </p>
             </div>
@@ -1569,8 +1539,8 @@ export default function App(): JSX.Element {
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                className={secondaryButtonClass}
+              <Button
+                variant="secondary"
                 onClick={() => {
                   setActiveDialog(null);
                   setActivationCode("");
@@ -1578,25 +1548,32 @@ export default function App(): JSX.Element {
                 type="button"
               >
                 取消
-              </button>
-              <button
-                className={primaryButtonClass}
+              </Button>
+              <Button
+                variant="primary"
                 disabled={!activationCode.trim() || activatingAdmin}
                 type="submit"
               >
                 {activatingAdmin ? "激活中..." : "激活"}
-              </button>
+              </Button>
             </div>
           </form>
-        </div>
+        </Modal>
       ) : null}
 
       {environmentSettingsDialogOpen ? (
-        <div className="fixed inset-0 z-[100] grid place-items-center bg-[#10262b]/35 p-4">
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-5xl overflow-auto rounded-lg border border-slate-900/10 bg-white p-4 shadow-[0_28px_80px_rgba(16,38,43,0.24)]">
+        <Modal
+          className="max-h-[calc(100vh-2rem)] max-w-5xl overflow-auto p-ui-4"
+          closeDisabled={savingEnvironmentSettings}
+          labelledBy="environment-settings-title"
+          onClose={() => {
+            setActiveDialog(null);
+            setEnvironmentDraft([]);
+          }}
+        >
             <div className="mb-4">
-              <h2 className="m-0 text-lg">环境配置</h2>
-              <div className="mt-1.5 text-sm text-[#728188]">
+              <h2 className="m-0 text-lg" id="environment-settings-title">环境配置</h2>
+              <div className="mt-1.5 text-sm text-muted-foreground">
                 配置环境名称、类型、展示目录和编辑权限。
               </div>
             </div>
@@ -1604,13 +1581,13 @@ export default function App(): JSX.Element {
             <div className="grid gap-3">
               {environmentDraft.map((environment, index) => (
                 <div
-                  className="grid gap-2 rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85 p-3"
+                  className="grid gap-ui-2 rounded-ui-md border border-ui-border bg-surface-subtle p-ui-3"
                   key={environment.id || index}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <strong className="text-[#183039]">环境 {index + 1}</strong>
+                    <strong className="text-foreground">环境 {index + 1}</strong>
                     <div className="flex flex-wrap items-center gap-3">
-                      <label className="inline-flex items-center gap-2 text-sm font-semibold text-[#40545b]">
+                      <label className="inline-flex items-center gap-ui-2 text-sm font-semibold text-muted-foreground">
                         <input
                           checked={environment.requiresAdminToEdit}
                           disabled={environment.kind === "fragment-library"}
@@ -1623,14 +1600,15 @@ export default function App(): JSX.Element {
                         />
                         需要管理员权限编辑
                       </label>
-                      <button
-                        className="rounded-lg border-0 bg-[#c94a35]/10 px-3 py-2 text-[#9f2f20] transition duration-200 hover:-translate-y-px hover:bg-[#c94a35]/15 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 motion-reduce:hover:translate-y-0 motion-reduce:transition-none"
+                      <Button
+                        size="sm"
+                        variant="danger"
                         disabled={environmentDraft.length <= 1}
                         onClick={() => removeEnvironmentDraft(index)}
                         type="button"
                       >
                         删除
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <div className="grid gap-3 xl:grid-cols-[minmax(160px,0.7fr)_minmax(180px,0.7fr)_minmax(320px,1.4fr)]">
@@ -1686,14 +1664,14 @@ export default function App(): JSX.Element {
             </div>
 
             <div className="mt-3">
-              <button className={secondaryButtonClass} onClick={addEnvironmentDraft} type="button">
+              <Button variant="secondary" onClick={addEnvironmentDraft} type="button">
                 新增环境
-              </button>
+              </Button>
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                className={secondaryButtonClass}
+              <Button
+                variant="secondary"
                 onClick={() => {
                   setActiveDialog(null);
                   setEnvironmentDraft([]);
@@ -1701,18 +1679,17 @@ export default function App(): JSX.Element {
                 type="button"
               >
                 取消
-              </button>
-              <button
-                className={primaryButtonClass}
+              </Button>
+              <Button
+                variant="primary"
                 disabled={savingEnvironmentSettings}
                 onClick={() => void saveEnvironmentSettings()}
                 type="button"
               >
                 {savingEnvironmentSettings ? "保存中..." : "保存"}
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       <div
@@ -1812,12 +1789,12 @@ export default function App(): JSX.Element {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 className="m-0 text-lg">版本比对</h2>
-                  <div className="mt-2 text-sm text-[#5d7077]">
+                  <div className="mt-2 text-sm text-muted-foreground">
                     {activeEnvironment?.label ?? "当前环境"}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <div className="text-sm text-[#4d6269]">
+                  <div className="text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
                       <input
                         className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
@@ -1825,7 +1802,7 @@ export default function App(): JSX.Element {
                         value={reviewSince}
                         onChange={(event) => reviewController.setSince(event.target.value)}
                       />
-                      <span className="text-[#8a999f]">-</span>
+                      <span className="text-subtle-foreground">-</span>
                       <input
                         className={cn(inputClass, "review-date-input h-[34px] w-[160px] py-1.5")}
                         type="date"
@@ -1834,14 +1811,15 @@ export default function App(): JSX.Element {
                       />
                     </div>
                   </div>
-                  <button
-                    className={cn(secondaryButtonClass, "w-[72px] justify-center px-0")}
+                  <Button
+                    className="w-[72px] px-0"
+                    variant="secondary"
                     type="button"
                     onClick={() => void loadReviewChanges()}
                     disabled={reviewLoading}
                   >
                     {reviewLoading ? "查询中..." : "查询"}
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -1851,8 +1829,8 @@ export default function App(): JSX.Element {
                 <div className={emptyBlockClass}>当前环境在该日期之后没有配置改动</div>
               ) : (
                 <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(0,1fr)] gap-3 overflow-hidden">
-                  <div className="min-h-0 overflow-hidden rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85">
-                    <div className="border-b border-[#183039]/10 px-3 py-2 text-sm font-semibold text-[#20404a]">
+                  <div className="min-h-0 overflow-hidden rounded-ui-md border border-ui-border bg-surface-subtle">
+                    <div className="border-b border-ui-border px-ui-3 py-ui-2 text-sm font-semibold text-foreground">
                       {reviewCommits.length >= 200
                         ? "最近 200 次相关提交"
                         : `${reviewCommits.length} 次相关提交`}
@@ -1866,21 +1844,21 @@ export default function App(): JSX.Element {
                             className={cn(
                               "mb-1.5 w-full rounded-lg border px-3 py-2.5 text-left transition duration-200",
                               isSelected
-                                ? "border-[#0e6b72]/25 bg-white shadow-[0_14px_32px_rgba(28,64,54,0.12)]"
-                                : "border-transparent bg-transparent hover:bg-white/75",
+                                ? "border-primary/25 bg-surface shadow-ui-sm"
+                                : "border-transparent bg-transparent hover:bg-surface/75",
                             )}
                             type="button"
                             onClick={() => selectReviewCommit(commit)}
                           >
-                            <span className="block break-words text-sm font-semibold text-[#183039]">
+                            <span className="block break-words text-sm font-semibold text-foreground">
                               {commit.message || "更新配置"}
                             </span>
-                            <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
+                            <span className="mt-2 flex flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
                               <span>{commit.authorName}</span>
                               <span>{formatTime(commit.committedAt)}</span>
                               <span>{commit.files.length} 个文件</span>
                             </span>
-                            <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
+                            <span className="mt-2 block break-all font-mono text-[12px] text-subtle-foreground">
                               {commit.hash}
                             </span>
                           </button>
@@ -1893,27 +1871,27 @@ export default function App(): JSX.Element {
                     {selectedReviewCommit ? (
                       <>
                         <div className="mb-3.5 flex flex-wrap items-center gap-2">
-                          <span className="break-all font-mono text-xs text-[#5d7077]">
+                          <span className="break-all font-mono text-xs text-muted-foreground">
                             {selectedReviewCommit.hash}
                           </span>
-                          <span className="rounded-full bg-[#134e5e]/10 px-3 py-1.5 text-xs text-[#214954]">
+                          <span className="rounded-ui-full bg-primary-soft px-ui-3 py-1.5 text-xs text-primary">
                             {selectedReviewCommit.files.length} 个文件
                           </span>
                         </div>
-                        <div className="mb-3 grid max-h-[220px] gap-1.5 overflow-auto rounded-lg border border-[#183039]/10 bg-[#f6f9f7]/85 p-2">
+                        <div className="mb-3 grid max-h-[220px] gap-1.5 overflow-auto rounded-ui-md border border-ui-border bg-surface-subtle p-ui-2">
                           {selectedReviewCommit.files.map((file) => (
                             <button
                               key={`${selectedReviewCommit.hash}-${file.path}`}
                               className={cn(
                                 "grid grid-cols-[48px_minmax(0,1fr)] items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition",
                                 selectedReviewPath === file.path
-                                  ? "bg-white text-[#183039] shadow-[0_8px_20px_rgba(28,64,54,0.08)]"
-                                  : "text-[#40545b] hover:bg-white/75",
+                                  ? "bg-surface text-foreground shadow-ui-xs"
+                                  : "text-muted-foreground hover:bg-surface/75",
                               )}
                               type="button"
                               onClick={() => void loadReviewDiff(selectedReviewCommit, file.path)}
                             >
-                              <span className="font-mono text-xs text-[#7b8d94]">
+                              <span className="font-mono text-xs text-subtle-foreground">
                                 {file.status}
                               </span>
                               <span className="min-w-0 break-all">{file.path}</span>
@@ -1961,14 +1939,14 @@ export default function App(): JSX.Element {
             />
 
             {fileConflict ? (
-              <div className="mb-3 grid gap-2 rounded-lg border border-[#c94a35]/20 bg-[#c94a35]/10 px-3 py-2 text-sm text-[#79301f]">
+              <div className="mb-3 grid gap-2 rounded-ui-md border border-danger/20 bg-danger-soft px-3 py-2 text-sm text-danger">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <strong>检测到远程冲突</strong>
-                    <div className="mt-1 text-[#8d3322]">远程文件已更新，你的编辑内容已保留。</div>
+                    <div className="mt-1 text-danger">远程文件已更新，你的编辑内容已保留。</div>
                   </div>
-                  <button
-                    className={secondaryButtonClass}
+                  <Button
+                    variant="secondary"
                     type="button"
                     onClick={() => {
                       setEditorContent(fileConflict.remoteContent);
@@ -1992,7 +1970,7 @@ export default function App(): JSX.Element {
                     }}
                   >
                     使用远程版本
-                  </button>
+                  </Button>
                 </div>
                 <LazyDiffView
                   before={fileConflict.remoteContent}
@@ -2220,7 +2198,7 @@ export default function App(): JSX.Element {
                 editorViewMode === "diff" ? (
                   <div
                     ref={editorSurfaceRef}
-                    className="relative h-full min-h-0 overflow-hidden bg-[#fafcfb]/95"
+                    className="relative h-full min-h-0 overflow-hidden bg-surface-subtle/95"
                   >
                     <LazyMergeConfigEditor
                       filePath={selectedPath}
@@ -2245,7 +2223,7 @@ export default function App(): JSX.Element {
                     <div
                       ref={editorSurfaceRef}
                       className={cn(
-                        "relative overflow-hidden bg-[#fafcfb]/95",
+                        "relative overflow-hidden bg-surface-subtle/95",
                         editorSurfaceHeightClass,
                       )}
                     >
@@ -2354,7 +2332,7 @@ export default function App(): JSX.Element {
             {selectedHistory ? (
               <div className="grid min-h-0 flex-1 gap-3 min-[1080px]:grid-cols-[340px_minmax(0,1fr)]">
                 <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-ui-border bg-surface-subtle">
-                  <div className="border-b border-[#183039]/10 px-3 py-2 text-sm font-semibold text-[#20404a]">
+                  <div className="border-b border-ui-border px-ui-3 py-ui-2 text-sm font-semibold text-foreground">
                     历史提交
                   </div>
                   <div className="min-h-0 flex-1 overflow-auto p-2">
@@ -2367,8 +2345,8 @@ export default function App(): JSX.Element {
                           className={cn(
                             "mb-1.5 w-full rounded-lg border px-3 py-2.5 text-left transition duration-200",
                             isSelected
-                              ? "border-primary/25 bg-white shadow-[0_14px_32px_rgb(var(--color-primary-shadow)/0.12)]"
-                              : "border-transparent bg-transparent hover:bg-white/75",
+                              ? "border-primary/25 bg-surface shadow-ui-sm"
+                              : "border-transparent bg-transparent hover:bg-surface/75",
                           )}
                           type="button"
                           onClick={() => {
@@ -2377,14 +2355,14 @@ export default function App(): JSX.Element {
                             }
                           }}
                         >
-                          <span className="block break-words text-sm font-semibold text-[#183039]">
+                          <span className="block break-words text-sm font-semibold text-foreground">
                             {commitSubject}
                           </span>
-                          <span className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#61747b]">
+                          <span className="mt-2 flex flex-wrap items-center gap-ui-2 text-xs text-muted-foreground">
                             <span>{commit.authorName}</span>
                             <span>{formatTime(commit.committedAt)}</span>
                           </span>
-                          <span className="mt-2 block break-all font-mono text-[12px] text-[#6b7d84]">
+                          <span className="mt-2 block break-all font-mono text-[12px] text-subtle-foreground">
                             {commit.hash}
                           </span>
                         </button>
@@ -2396,25 +2374,25 @@ export default function App(): JSX.Element {
                 <div className="flex min-h-0 min-w-0 flex-col">
                   <div className="mb-3.5 flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="break-words text-base font-bold text-[#183039]">
+                      <div className="break-words text-base font-bold text-foreground">
                         {getCommitSubject(selectedHistory.message)}
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-[#55686f]">
-                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                      <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[13px] text-muted-foreground">
+                        <span className="inline-flex min-h-7 items-center rounded-ui-full bg-foreground/[0.06] px-ui-3">
                           {selectedHistory.authorName}
                         </span>
-                        <span className="inline-flex min-h-7 items-center rounded-full bg-[#143138]/[0.06] px-3">
+                        <span className="inline-flex min-h-7 items-center rounded-ui-full bg-foreground/[0.06] px-ui-3">
                           {formatTime(selectedHistory.committedAt)}
                         </span>
-                        <span className="inline-flex min-h-7 max-w-full items-center break-all rounded-full bg-[#143138]/[0.06] px-3 font-mono text-[13px]">
+                        <span className="inline-flex min-h-7 max-w-full items-center break-all rounded-ui-full bg-foreground/[0.06] px-ui-3 font-mono text-[13px]">
                           {selectedHistory.hash}
                         </span>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <div className="flex items-center gap-1">
-                        <button
-                          className={secondaryButtonClass}
+                        <Button
+                          variant="secondary"
                           type="button"
                           onClick={() =>
                             selectedHistoryDetail && extractHistoryReplay(selectedHistoryDetail)
@@ -2431,7 +2409,7 @@ export default function App(): JSX.Element {
                             pendingReplay.sourcePath === selectedPath
                             ? "已提取修改"
                             : "提取修改"}
-                        </button>
+                        </Button>
                         <span className="group/help relative inline-flex">
                           <IconButton
                             aria-describedby="history-replay-help"
@@ -2444,21 +2422,21 @@ export default function App(): JSX.Element {
                           <span
                             id="history-replay-help"
                             role="tooltip"
-                            className="pointer-events-none invisible absolute bottom-[calc(100%+10px)] right-0 z-30 w-80 max-w-[calc(100vw-32px)] translate-y-1 rounded-lg border border-[#183039]/10 bg-[#183039] px-3.5 py-3 text-left text-xs font-normal leading-relaxed text-white opacity-0 shadow-[0_14px_36px_rgba(24,48,57,0.24)] transition duration-150 group-hover/help:visible group-hover/help:translate-y-0 group-hover/help:opacity-100 group-focus-within/help:visible group-focus-within/help:translate-y-0 group-focus-within/help:opacity-100 motion-reduce:transition-none"
+                            className="pointer-events-none invisible absolute bottom-[calc(100%+10px)] right-0 z-30 w-80 max-w-[calc(100vw-32px)] translate-y-1 rounded-ui-md border border-foreground/10 bg-foreground px-3.5 py-ui-3 text-left text-xs font-normal leading-relaxed text-primary-foreground opacity-0 shadow-ui-overlay transition duration-150 group-hover/help:visible group-hover/help:translate-y-0 group-hover/help:opacity-100 group-focus-within/help:visible group-focus-within/help:translate-y-0 group-focus-within/help:opacity-100 motion-reduce:transition-none"
                           >
                             <span className="block font-semibold">
                               提取修改后，可尝试重放到任意环境或文件。
                             </span>
-                            <span className="mt-1.5 block text-white/75">
+                            <span className="mt-1.5 block text-primary-foreground/75">
                               仅当待修改内容及其前后各约 4
                               行上下文完全匹配时才会成功。内容已变更、上下文不足或存在重复时，不会执行重放。
                             </span>
-                            <span className="absolute -bottom-1 right-2.5 h-2 w-2 rotate-45 bg-[#183039]" />
+                            <span className="absolute -bottom-1 right-2.5 h-2 w-2 rotate-45 bg-foreground" />
                           </span>
                         </span>
                       </div>
-                      <button
-                        className={primaryButtonClass}
+                      <Button
+                        variant="primary"
                         type="button"
                         onClick={() =>
                           selectedHistoryDetail && void restoreHistoryCommit(selectedHistoryDetail)
@@ -2471,7 +2449,7 @@ export default function App(): JSX.Element {
                         }
                       >
                         {restoringHash === selectedHistory.hash ? "回滚中..." : "回滚到此版本"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   {historyDetailLoading ? (

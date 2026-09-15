@@ -1,14 +1,13 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import type { PromptFragmentBatchPreview, RepoEnvironmentOption } from "../types";
 import {
   cn,
   emptyBlockClass,
   formLabelClass,
   formRowClass,
-  inputClass,
-  primaryButtonClass,
-  secondaryButtonClass
+  inputClass
 } from "../lib/ui";
+import { Button, Modal } from "./ui";
 
 type PreviewFilter = "all" | "changed" | "unchanged" | "missing" | "error";
 
@@ -48,17 +47,6 @@ export function PromptFragmentBatchDialog(props: {
   const [expandedPreviewPath, setExpandedPreviewPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
-
-  useEffect(() => {
-    const previousBodyOverflow = document.body.style.overflow;
-    const previousDocumentOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      document.documentElement.style.overflow = previousDocumentOverflow;
-    };
-  }, []);
 
   function toggleEnvironment(environmentId: string): void {
     setPreview(null);
@@ -122,24 +110,29 @@ export function PromptFragmentBatchDialog(props: {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden overscroll-contain bg-[#10262b]/45 p-3">
-      <div className="mx-auto max-h-[calc(100vh-1.5rem)] w-full max-w-6xl overflow-hidden rounded-lg bg-white shadow-[0_28px_90px_rgba(16,38,43,0.3)]">
-        <div className="grid max-h-[calc(100vh-1.5rem)] gap-3 overflow-y-auto overscroll-contain p-3">
+    <Modal
+      className="max-h-[calc(100vh-1.5rem)] max-w-6xl overflow-hidden"
+      closeDisabled={applying}
+      labelledBy="prompt-fragment-batch-title"
+      onClose={props.onClose}
+      overlayClassName="p-3"
+    >
+      <div className="grid max-h-[calc(100vh-1.5rem)] gap-3 overflow-y-auto overscroll-contain p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-xl">批量替换提示词片段</h2>
-            <div className="mt-2 break-all text-sm text-[#64777e]">来源：{props.sourcePath}</div>
-            {preview ? <div className="mt-1 text-sm text-[#315159]">根标签：&lt;{preview.tagName}&gt;</div> : null}
+            <h2 className="m-0 text-xl" id="prompt-fragment-batch-title">批量替换提示词片段</h2>
+            <div className="mt-2 break-all text-sm text-muted-foreground">来源：{props.sourcePath}</div>
+            {preview ? <div className="mt-1 text-sm text-foreground">根标签：&lt;{preview.tagName}&gt;</div> : null}
           </div>
-          <button className={secondaryButtonClass} onClick={props.onClose} type="button">关闭</button>
+          <Button variant="secondary" onClick={props.onClose} type="button">关闭</Button>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
-          <fieldset className="rounded-lg border border-[#183039]/10 p-3">
-            <legend className="px-2 text-sm font-semibold text-[#223841]">目标环境</legend>
+          <fieldset className="rounded-ui-md border border-ui-border p-ui-3">
+            <legend className="px-ui-2 text-sm font-semibold text-foreground">目标环境</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {targets.map((environment) => (
-                <label className="flex items-center gap-2 rounded-lg bg-[#f3f7f5] px-3 py-2 text-sm" key={environment.id}>
+                <label className="flex items-center gap-ui-2 rounded-ui-md bg-surface-subtle px-ui-3 py-ui-2 text-sm" key={environment.id}>
                   <input
                     checked={environmentIds.includes(environment.id)}
                     onChange={() => toggleEnvironment(environment.id)}
@@ -165,25 +158,25 @@ export function PromptFragmentBatchDialog(props: {
                 placeholder="/tob-uat/*_prompt_cn"
               />
             </label>
-            <div className="text-xs leading-relaxed text-[#71838a]">
+            <div className="text-xs leading-relaxed text-subtle-foreground">
               相对于每个目标环境根目录；* 不跨目录，** 可跨任意层级，禁止使用 ..。
             </div>
             <div className="mt-3 flex justify-end">
-              <button
-                className={primaryButtonClass}
+              <Button
+                variant="primary"
                 disabled={loading || !environmentIds.length || !pattern.trim()}
                 onClick={() => void loadPreview()}
                 type="button"
               >
                 {loading ? "正在扫描..." : "生成替换预览"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
 
         {preview ? (
           <>
-            <div className="flex flex-wrap gap-1 rounded-lg bg-[#eef4f2] p-1">
+            <div className="flex flex-wrap gap-ui-1 rounded-ui-md bg-surface-muted p-ui-1">
               {[
                 ["all", "路径匹配", preview.matchedCount],
                 ["changed", "可替换", preview.changedCount],
@@ -196,21 +189,21 @@ export function PromptFragmentBatchDialog(props: {
                   className={cn(
                     "inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
                     activeFilter === filter
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-[#53676e] hover:bg-white/80 hover:text-[#183039]"
+                      ? "bg-primary text-primary-foreground shadow-ui-xs"
+                      : "text-muted-foreground hover:bg-surface/80 hover:text-foreground"
                   )}
                   key={String(filter)}
                   onClick={() => setActiveFilter(filter as PreviewFilter)}
                   type="button"
                 >
-                  <span className={cn("font-bold", activeFilter === filter ? "text-white" : "text-[#183039]")}>{value}</span>
-                  <span className={activeFilter === filter ? "text-white/85" : "text-[#64777e]"}>{label}</span>
+                  <span className={cn("font-bold", activeFilter === filter ? "text-primary-foreground" : "text-foreground")}>{value}</span>
+                  <span className={activeFilter === filter ? "text-primary-foreground/85" : "text-muted-foreground"}>{label}</span>
                 </button>
               ))}
             </div>
 
             {preview.errorCount ? (
-              <div className="rounded-lg border border-[#c94a35]/20 bg-[#c94a35]/10 px-3 py-2 text-sm text-[#8d3322]">
+              <div className="rounded-ui-md border border-danger/20 bg-danger-soft px-3 py-2 text-sm text-danger">
                 存在 XML 标签异常。必须先修复所有异常文件，再重新生成预览。
               </div>
             ) : null}
@@ -224,7 +217,7 @@ export function PromptFragmentBatchDialog(props: {
                 const selectable = item.status === "changed";
                 return (
                   <details
-                    className="rounded-lg border border-[#183039]/10 bg-[#fafcfb] p-2.5"
+                    className="rounded-ui-md border border-ui-border bg-surface-subtle p-2.5"
                     key={item.path}
                     onToggle={(event) => {
                       const isOpen = event.currentTarget.open;
@@ -250,19 +243,19 @@ export function PromptFragmentBatchDialog(props: {
                         ) : null}
                         <span className={cn(
                           "rounded-full px-2.5 py-1 text-xs",
-                          item.status === "changed" && "bg-[#1d8c68]/10 text-[#17684f]",
-                          item.status === "error" && "bg-[#c94a35]/10 text-[#9f2f20]",
-                          item.status === "missing" && "bg-[#d8a21b]/15 text-[#785918]",
-                          item.status === "unchanged" && "bg-[#183039]/10 text-[#40545b]"
+                          item.status === "changed" && "bg-success-soft text-success",
+                          item.status === "error" && "bg-danger-soft text-danger",
+                          item.status === "missing" && "bg-warning-soft text-warning",
+                          item.status === "unchanged" && "bg-surface-muted text-muted-foreground"
                         )}>{item.message}</span>
                         <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-muted-foreground">
                           {item.environmentLabel}
                         </span>
-                        <span className="min-w-0 break-all text-sm font-semibold text-[#183039]">{item.path}</span>
+                        <span className="min-w-0 break-all text-sm font-semibold text-foreground">{item.path}</span>
                       </div>
                     </summary>
                     {item.beforeContent !== undefined && item.afterContent !== undefined ? (
-                      <Suspense fallback={<div className="mt-3 text-sm text-[#6c7d83]">正在加载差异...</div>}>
+                      <Suspense fallback={<div className="mt-3 text-sm text-muted-foreground">正在加载差异...</div>}>
                         <DiffView
                           before={item.beforeContent}
                           after={item.afterContent}
@@ -272,7 +265,7 @@ export function PromptFragmentBatchDialog(props: {
                         />
                       </Suspense>
                     ) : item.beforeContent !== undefined ? (
-                      <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-[#f1f4f3] p-3 text-xs">{item.beforeContent}</pre>
+                      <pre className="mt-2 whitespace-pre-wrap rounded-ui-md bg-surface-muted p-ui-3 text-xs">{item.beforeContent}</pre>
                     ) : null}
                   </details>
                 );
@@ -284,20 +277,19 @@ export function PromptFragmentBatchDialog(props: {
               <textarea className={cn(inputClass, "min-h-20 resize-y")} value={message} onChange={(event) => setMessage(event.target.value)} />
             </label>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-[#64777e]">已选择 {selectedPaths.length} 个文件，将作为一个 Git commit 提交。</div>
-              <button
-                className={primaryButtonClass}
+              <div className="text-sm text-muted-foreground">已选择 {selectedPaths.length} 个文件，将作为一个 Git commit 提交。</div>
+              <Button
+                variant="primary"
                 disabled={!preview.canApply || !selectedPaths.length || applying}
                 onClick={() => void applyBatch()}
                 type="button"
               >
                 {applying ? "正在提交..." : "确认批量替换并推送"}
-              </button>
+              </Button>
             </div>
           </>
         ) : null}
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

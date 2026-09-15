@@ -24,7 +24,7 @@ const configEditorTheme = EditorView.theme(
   {
     "&": {
       background: "transparent",
-      color: "#1f2937",
+      color: "rgb(var(--color-foreground))",
       height: "100%"
     },
     "&.cm-focused": {
@@ -44,29 +44,29 @@ const configEditorTheme = EditorView.theme(
       padding: "0 16px 64px 12px"
     },
     ".cm-cursorLayer .cm-cursor": {
-      borderLeft: "2px solid #c94a35"
+      borderLeft: "2px solid rgb(var(--color-primary))"
     },
     ".cm-focused .cm-dropCursor": {
-      borderLeftColor: "#c94a35"
+      borderLeftColor: "rgb(var(--color-primary))"
     },
     ".cm-line": {
       padding: "0"
     },
     ".cm-gutters": {
-      backgroundColor: "rgba(243, 244, 246, 0.82)",
-      borderRight: "1px solid rgba(31, 41, 55, 0.1)",
-      color: "#9ca3af"
+      backgroundColor: "rgb(var(--color-surface-muted) / 0.82)",
+      borderRight: "1px solid rgb(var(--color-foreground) / 0.1)",
+      color: "rgb(var(--color-subtle-foreground))"
     },
     ".cm-lineNumbers .cm-gutterElement": {
       minWidth: "22px",
       padding: "0 4px 0 2px"
     },
     ".cm-placeholder": {
-      color: "#9ca3af"
+      color: "rgb(var(--color-subtle-foreground))"
     },
     ".cm-validationIssue": {
-      backgroundColor: "rgba(201, 74, 53, 0.12)",
-      textDecoration: "underline wavy #c94a35",
+      backgroundColor: "rgb(var(--color-danger) / 0.1)",
+      textDecoration: "underline wavy rgb(var(--color-danger))",
       textDecorationThickness: "1.5px",
       textUnderlineOffset: "3px"
     }
