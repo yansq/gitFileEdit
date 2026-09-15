@@ -25,7 +25,7 @@ function EnvironmentGlyph({ fragment }: { fragment: boolean }): JSX.Element {
 function EnvironmentTypeBadge({ fragment }: { fragment: boolean }): JSX.Element {
   return (
     <span
-      className="shrink-0 rounded-ui-full bg-[#e8eef5] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[#50677c]"
+      className="shrink-0 rounded-ui-full bg-[#e8eef5] px-2 py-0.5 text-[11px] font-medium leading-4 text-[#50677c]"
     >
       {fragment ? "片段库" : "配置"}
     </span>
@@ -78,7 +78,7 @@ export function EnvironmentSwitcher(props: {
         <EnvironmentGlyph fragment={activeIsFragment} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-ui-1.5">
-            <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {activeEnvironment?.label ?? "选择环境"}
             </span>
             {activeEnvironment ? <EnvironmentTypeBadge fragment={activeIsFragment} /> : null}

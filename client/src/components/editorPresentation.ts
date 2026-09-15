@@ -6,8 +6,11 @@ import { tags } from "@lezer/highlight";
 
 export type EditorLanguageMode = "auto" | "xml";
 
+export const editorFontFamily =
+  '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", "Microsoft YaHei", "Liberation Mono", monospace';
+
 export const editorHighlightStyle = HighlightStyle.define([
-  { tag: tags.comment, color: "#8a94a3", fontStyle: "italic" },
+  { tag: tags.comment, color: "#8a94a3" },
   { tag: [tags.keyword, tags.typeName, tags.className], color: "#50677c", fontWeight: "600" },
   { tag: [tags.propertyName, tags.attributeName], color: "#3f6477" },
   { tag: [tags.tagName, tags.string, tags.regexp], color: "#287f7b" },

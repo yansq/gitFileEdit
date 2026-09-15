@@ -14,6 +14,7 @@ import {
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import {
+  editorFontFamily,
   editorHighlightStyle,
   editorLanguageForPath,
   type EditorLanguageMode,
@@ -30,9 +31,9 @@ const configEditorTheme = EditorView.theme(
       outline: "none"
     },
     ".cm-scroller": {
-      fontFamily:
-        '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+      fontFamily: editorFontFamily,
       fontSize: "13px",
+      fontVariantLigatures: "none",
       lineHeight: "1.65",
       overflow: "auto",
       scrollPaddingBottom: "64px"

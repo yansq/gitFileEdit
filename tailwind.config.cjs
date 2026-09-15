@@ -80,7 +80,10 @@ module.exports = {
       },
       fontFamily: {
         sans: [
-          "Inter",
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI Variable Text",
           "Segoe UI",
           "Microsoft YaHei UI",
           "Microsoft YaHei",
@@ -91,10 +94,13 @@ module.exports = {
           "sans-serif"
         ],
         mono: [
-          "JetBrains Mono",
+          "Cascadia Mono",
           "Cascadia Code",
+          "JetBrains Mono",
           "SFMono-Regular",
           "Consolas",
+          "Microsoft YaHei UI",
+          "Microsoft YaHei",
           "Liberation Mono",
           "monospace"
         ]

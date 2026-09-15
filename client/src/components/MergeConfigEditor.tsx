@@ -16,6 +16,7 @@ import {
 import { useEffect, useRef } from "react";
 import type { ConfigEditorValidationIssue } from "./ConfigEditor";
 import {
+  editorFontFamily,
   editorHighlightStyle,
   editorLanguageForPath,
   type EditorLanguageMode,
@@ -24,8 +25,9 @@ import {
 const mergeEditorTheme = EditorView.theme({
   "&": { background: "transparent", color: "#1f2937", height: "100%" },
   ".cm-scroller": {
-    fontFamily: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+    fontFamily: editorFontFamily,
     fontSize: "13px",
+    fontVariantLigatures: "none",
     lineHeight: "1.65",
     overflow: "visible",
     scrollPaddingBottom: "64px"
