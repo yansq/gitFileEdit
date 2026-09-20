@@ -17,7 +17,9 @@ import {
   editorFontFamily,
   editorHighlightStyle,
   editorLanguageForPath,
+  editorSearchDecorations,
   type EditorLanguageMode,
+  type EditorSearchMatch,
 } from "./editorPresentation";
 
 const configEditorTheme = EditorView.theme(
@@ -69,6 +71,15 @@ const configEditorTheme = EditorView.theme(
       textDecoration: "underline wavy rgb(var(--color-danger))",
       textDecorationThickness: "1.5px",
       textUnderlineOffset: "3px"
+    },
+    ".cm-searchMatch": {
+      backgroundColor: "rgb(var(--color-warning-soft))",
+      borderRadius: "3px",
+      boxShadow: "inset 0 0 0 1px rgb(var(--color-warning) / 0.5)"
+    },
+    ".cm-searchMatch.cm-searchMatch-active": {
+      backgroundColor: "rgb(var(--color-warning) / 0.42)",
+      boxShadow: "inset 0 0 0 2px rgb(var(--color-warning) / 0.9)"
     }
   },
   { dark: false }
@@ -102,6 +113,8 @@ export function ConfigEditor(props: {
   disabled: boolean;
   placeholderText: string;
   validationIssue: ConfigEditorValidationIssue | null;
+  searchMatches?: EditorSearchMatch[];
+  activeSearchMatchIndex?: number;
   onChange: (view: EditorView) => void;
   onViewReady: (view: EditorView | null) => void;
 }): JSX.Element {
@@ -113,6 +126,7 @@ export function ConfigEditor(props: {
   const disabledCompartmentRef = useRef(new Compartment());
   const languageCompartmentRef = useRef(new Compartment());
   const validationCompartmentRef = useRef(new Compartment());
+  const searchCompartmentRef = useRef(new Compartment());
   const onChangeRef = useRef(props.onChange);
 
   useEffect(() => {
@@ -144,6 +158,15 @@ export function ConfigEditor(props: {
           ),
           validationCompartmentRef.current.of(
             EditorView.decorations.of(validationDecorations(props.validationIssue))
+          ),
+          searchCompartmentRef.current.of(
+            EditorView.decorations.of(
+              editorSearchDecorations(
+                props.searchMatches ?? [],
+                props.activeSearchMatchIndex ?? -1,
+                props.value.length,
+              ),
+            ),
           ),
           disabledCompartmentRef.current.of([
             EditorState.readOnly.of(props.disabled),
@@ -238,6 +261,22 @@ export function ConfigEditor(props: {
       )
     });
   }, [props.validationIssue]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: searchCompartmentRef.current.reconfigure(
+        EditorView.decorations.of(
+          editorSearchDecorations(
+            props.searchMatches ?? [],
+            props.activeSearchMatchIndex ?? -1,
+            view.state.doc.length,
+          ),
+        ),
+      ),
+    });
+  }, [props.activeSearchMatchIndex, props.searchMatches]);
 
   return <div ref={hostRef} className="h-full min-w-0" />;
 }

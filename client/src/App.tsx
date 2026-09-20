@@ -15,7 +15,9 @@ import {
 } from "react";
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
+import { ConfigFileDialog } from "./components/ConfigFileDialog";
 import { EnvironmentSwitcher } from "./components/EnvironmentSwitcher";
+import { TenantSwitcher } from "./components/TenantSwitcher";
 import { FileTree } from "./components/FileTree";
 import { PromptFragmentBatchDialog } from "./components/PromptFragmentBatchDialog";
 import { PromptFragmentFileDialog } from "./components/PromptFragmentFileDialog";
@@ -29,6 +31,10 @@ import { ApiRequestError, requestJson } from "./lib/api";
 import { buildFileTree, getPathWithinRoot, replaceEnvironmentRoot } from "./lib/filePaths";
 import { formatTime, formatXml, getCommitSubject } from "./lib/format";
 import { applyReplayPatch, createReplayPatch } from "./lib/replayPatch";
+import {
+  readWorkspacePreference,
+  writeWorkspacePreference,
+} from "./lib/workspacePreference";
 import {
   cn,
   editorSurfaceHeightClass,
@@ -46,9 +52,11 @@ import type {
   FileDetail,
   RepoEnvironmentOption,
   RepoFileSummary,
+  RepoTenantOption,
 } from "./types";
 
 interface EnvironmentSettingsResponse {
+  tenants: RepoTenantOption[];
   environments: RepoEnvironmentOption[];
 }
 
@@ -71,6 +79,8 @@ type ActiveDialog =
   | { type: "commit" }
   | { type: "environment-settings" }
   | { type: "fragment-batch" }
+  | { type: "config-file"; mode: "create" }
+  | { type: "config-file"; mode: "rename"; path: string }
   | { type: "fragment-file"; mode: "create" | "rename" }
   | null;
 
@@ -110,7 +120,9 @@ function LazyDiffView(props: ComponentProps<typeof DiffView>): JSX.Element {
 
 function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Element {
   return (
-    <Suspense fallback={<div className="h-full p-4 text-sm text-muted-foreground">正在加载编辑器...</div>}>
+    <Suspense
+      fallback={<div className="h-full p-4 text-sm text-muted-foreground">正在加载编辑器...</div>}
+    >
       <ConfigEditor {...props} />
     </Suspense>
   );
@@ -119,7 +131,9 @@ function LazyConfigEditor(props: ComponentProps<typeof ConfigEditor>): JSX.Eleme
 function LazyMergeConfigEditor(props: ComponentProps<typeof MergeConfigEditor>): JSX.Element {
   return (
     <Suspense
-      fallback={<div className="h-full p-4 text-sm text-muted-foreground">正在加载差异编辑器...</div>}
+      fallback={
+        <div className="h-full p-4 text-sm text-muted-foreground">正在加载差异编辑器...</div>
+      }
     >
       <MergeConfigEditor {...props} />
     </Suspense>
@@ -233,10 +247,7 @@ interface WorkspaceSectionTabsProps {
   onChange: (section: "editor" | "history") => void;
 }
 
-function WorkspaceSectionTabs({
-  activeSection,
-  onChange,
-}: WorkspaceSectionTabsProps): JSX.Element {
+function WorkspaceSectionTabs({ activeSection, onChange }: WorkspaceSectionTabsProps): JSX.Element {
   const items = [
     {
       value: "editor" as const,
@@ -326,16 +337,60 @@ function createEnvironmentId(label: string, index: number): string {
   return normalized || `env-${index + 1}`;
 }
 
+function getEnvironmentRootSuffix(environmentRoot: string, tenantRoot: string): string {
+  const normalizedEnvironmentRoot = environmentRoot.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  const normalizedTenantRoot = tenantRoot
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!normalizedTenantRoot) return normalizedEnvironmentRoot.replace(/\/+$/g, "");
+  if (normalizedEnvironmentRoot === normalizedTenantRoot) return "";
+  if (normalizedEnvironmentRoot.startsWith(`${normalizedTenantRoot}/`)) {
+    return normalizedEnvironmentRoot.slice(normalizedTenantRoot.length + 1);
+  }
+  return normalizedEnvironmentRoot;
+}
+
+function buildEnvironmentRoot(tenantRoot: string, suffix: string): string {
+  const normalizedTenantRoot = tenantRoot
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  const normalizedSuffix = suffix.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalizedTenantRoot) return normalizedSuffix;
+  return normalizedSuffix
+    ? `${normalizedTenantRoot}/${normalizedSuffix}`
+    : `${normalizedTenantRoot}/`;
+}
+
+function isValidEnvironmentRoot(environmentRoot: string, tenantRoot: string): boolean {
+  const suffix = getEnvironmentRootSuffix(environmentRoot, tenantRoot).replace(/\/+$/g, "");
+  return (
+    Boolean(suffix) &&
+    suffix.split("/").every((segment) => segment && segment !== "." && segment !== "..")
+  );
+}
+
 function createBlankEnvironment(
   index: number,
-  fallback?: RepoEnvironmentOption,
+  tenantId: string,
+  tenantRoot: string,
 ): RepoEnvironmentOption {
   return {
     id: `env-${Date.now()}-${index + 1}`,
+    tenantId,
     label: "",
-    root: fallback?.root ?? "",
+    root: tenantRoot ? `${tenantRoot.replace(/^\/+|\/+$/g, "")}/` : "",
     requiresAdminToEdit: false,
     kind: "config",
+  };
+}
+
+function createBlankTenant(index: number): RepoTenantOption {
+  return {
+    id: `tenant-${Date.now()}-${index + 1}`,
+    label: "",
+    root: "",
   };
 }
 
@@ -367,6 +422,7 @@ export default function App(): JSX.Element {
   const fileSearchInputRef = useRef<HTMLInputElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
+  const [selectedTenant, setSelectedTenant] = useState<string>("");
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
   const [fileQuery, setFileQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string>("");
@@ -390,9 +446,12 @@ export default function App(): JSX.Element {
   const [liveNotice, setLiveNotice] = useState<string | null>(null);
   const [mainView, setMainView] = useState<MainView>("workspace");
   const [environmentDraft, setEnvironmentDraft] = useState<RepoEnvironmentOption[]>([]);
+  const [tenantDraft, setTenantDraft] = useState<RepoTenantOption[]>([]);
+  const [selectedSettingsTenantId, setSelectedSettingsTenantId] = useState("");
   const [savingEnvironmentSettings, setSavingEnvironmentSettings] = useState(false);
   const [activeDialog, setActiveDialog] = useState<ActiveDialog>(null);
   const [fragmentFileOperation, setFragmentFileOperation] = useState(false);
+  const [configFileOperation, setConfigFileOperation] = useState(false);
 
   const accountMenuOpen = openHeaderPopover === "account";
   const showRepoDetails = openHeaderPopover === "repository";
@@ -401,6 +460,7 @@ export default function App(): JSX.Element {
   const activationDialogOpen = activeDialog?.type === "activation";
   const environmentSettingsDialogOpen = activeDialog?.type === "environment-settings";
   const fragmentBatchOpen = activeDialog?.type === "fragment-batch";
+  const configFileDialogMode = activeDialog?.type === "config-file" ? activeDialog.mode : null;
   const fragmentFileDialogMode = activeDialog?.type === "fragment-file" ? activeDialog.mode : null;
   const editorController = useFileEditor({
     active: activeWorkspaceSection === "editor" && !reviewOpen,
@@ -421,9 +481,17 @@ export default function App(): JSX.Element {
     viewMode: editorViewMode,
   } = editorController;
   const files: RepoFileSummary[] = bootstrap?.files ?? [];
+  const tenantOptions = bootstrap?.config.tenants ?? [];
   const environmentOptions = bootstrap?.config.environments ?? [];
+  const activeTenant = tenantOptions.find((item) => item.id === selectedTenant) ?? tenantOptions[0];
+  const tenantEnvironmentOptions = environmentOptions.filter(
+    (item) => item.tenantId === activeTenant?.id,
+  );
+  const selectedSettingsTenant =
+    tenantDraft.find((item) => item.id === selectedSettingsTenantId) ?? tenantDraft[0];
   const activeEnvironment =
-    environmentOptions.find((item) => item.id === selectedEnvironment) ?? environmentOptions[0];
+    tenantEnvironmentOptions.find((item) => item.id === selectedEnvironment) ??
+    tenantEnvironmentOptions[0];
   const fileHistory = fileDetail?.history ?? [];
   const historyController = useFileHistory({
     active: activeWorkspaceSection === "history" && !reviewOpen,
@@ -443,7 +511,9 @@ export default function App(): JSX.Element {
       setActiveDialog(null);
       setOpenHeaderPopover(null);
     },
-    onAuthenticated: () => refreshBootstrap(undefined, false),
+    onAuthenticated: async (user) => {
+      await refreshBootstrap(undefined, false, user.id);
+    },
     onError: setError,
     onMessage: setMessage,
     onSessionReset: resetWorkspaceState,
@@ -494,6 +564,7 @@ export default function App(): JSX.Element {
 
   function resetWorkspaceState(): void {
     setBootstrap(null);
+    setSelectedTenant("");
     setSelectedPath("");
     setFileDetail(null);
     setEditorContent("");
@@ -508,6 +579,8 @@ export default function App(): JSX.Element {
     setOpenHeaderPopover(null);
     setActiveDialog(null);
     setEnvironmentDraft([]);
+    setTenantDraft([]);
+    setSelectedSettingsTenantId("");
   }
 
   function handleAuthRequired(errorValue: unknown): boolean {
@@ -534,6 +607,7 @@ export default function App(): JSX.Element {
     reviewController.clearResults();
     historyController.reset();
     const nextEnvironment = environmentOptions.find((item) => item.id === nextEnvironmentId);
+    if (nextEnvironment) setSelectedTenant(nextEnvironment.tenantId);
     const replacedPath = selectedPath
       ? replaceEnvironmentRoot(selectedPath, environmentOptions, nextEnvironmentId)
       : null;
@@ -549,25 +623,81 @@ export default function App(): JSX.Element {
     setSelectedPath(fallbackPath);
   }
 
-  async function refreshBootstrap(preferredPath?: string, preserveForm = true): Promise<void> {
+  function switchTenant(nextTenantId: string): void {
+    if (nextTenantId === activeTenant?.id) return;
+    const nextEnvironments = environmentOptions.filter((item) => item.tenantId === nextTenantId);
+    const matchingEnvironment = nextEnvironments.find(
+      (item) => item.label === activeEnvironment?.label && item.kind === activeEnvironment?.kind,
+    );
+    const nextEnvironment = matchingEnvironment ?? nextEnvironments[0];
+    setSelectedTenant(nextTenantId);
+    setSelectedEnvironment(nextEnvironment?.id ?? "");
+    reviewController.clearResults();
+    historyController.reset();
+
+    const replacedPath =
+      nextEnvironment && selectedPath
+        ? replaceEnvironmentRoot(selectedPath, environmentOptions, nextEnvironment.id)
+        : null;
+    if (replacedPath && files.some((file) => file.path === replacedPath)) {
+      setSelectedPath(replacedPath);
+      return;
+    }
+    setSelectedPath(
+      nextEnvironment
+        ? (files.find((file) => getPathWithinRoot(file.path, nextEnvironment.root) !== null)
+          ?.path ?? "")
+        : "",
+    );
+  }
+
+  async function refreshBootstrap(
+    preferredPath?: string,
+    preserveForm = true,
+    preferenceUserId = authUser?.id,
+  ): Promise<string> {
     const data = await requestJson<BootstrapResponse>("/api/bootstrap");
-    const nextPath =
+    const environmentOptions = data.config.environments;
+    const storedPreference = preferenceUserId
+      ? readWorkspacePreference(preferenceUserId)
+      : null;
+    const storedTenant = storedPreference
+      ? data.config.tenants.find((item) => item.id === storedPreference.tenantId)
+      : undefined;
+    const storedEnvironment = storedTenant
+      ? environmentOptions.find(
+        (item) =>
+          item.id === storedPreference?.environmentId && item.tenantId === storedTenant.id,
+      ) ?? environmentOptions.find((item) => item.tenantId === storedTenant.id)
+      : undefined;
+    const validPreferredPath =
       preferredPath && data.files.some((file) => file.path === preferredPath)
         ? preferredPath
-        : (data.selectedFile ?? "");
-    const environmentOptions = data.config.environments;
-    const derivedEnvironment =
-      environmentOptions.find((item) => nextPath && getPathWithinRoot(nextPath, item.root) !== null)
-        ?.id ||
-      environmentOptions[0]?.id ||
-      "";
+        : "";
+    const validCurrentPath = data.files.some((file) => file.path === selectedPath)
+      ? selectedPath
+      : "";
+    const nextPath = validPreferredPath || validCurrentPath || (storedEnvironment
+      ? (data.files.find(
+        (file) => getPathWithinRoot(file.path, storedEnvironment.root) !== null,
+      )?.path ?? "")
+      : (data.selectedFile ?? ""));
+    const derivedEnvironmentOption =
+      environmentOptions.find(
+        (item) => nextPath && getPathWithinRoot(nextPath, item.root) !== null,
+      ) ?? storedEnvironment ?? environmentOptions[0];
 
     startTransition(() => {
       setBootstrap(data);
+      setSelectedTenant((current) =>
+        current && data.config.tenants.some((item) => item.id === current)
+          ? current
+          : (derivedEnvironmentOption?.tenantId ?? data.config.tenants[0]?.id ?? ""),
+      );
       setSelectedEnvironment((current) =>
         current && environmentOptions.some((item) => item.id === current)
           ? current
-          : derivedEnvironment,
+          : (derivedEnvironmentOption?.id ?? ""),
       );
       if (nextPath !== selectedPath) {
         historyController.reset();
@@ -579,7 +709,16 @@ export default function App(): JSX.Element {
         });
       }
     });
+    return nextPath;
   }
+
+  useEffect(() => {
+    if (!authUser || !activeTenant || !activeEnvironment) return;
+    writeWorkspacePreference(authUser.id, {
+      tenantId: activeTenant.id,
+      environmentId: activeEnvironment.id,
+    });
+  }, [activeEnvironment?.id, activeTenant?.id, authUser?.id]);
 
   async function refreshFile(pathValue: string, preserveDraft: boolean): Promise<void> {
     if (!pathValue) {
@@ -622,12 +761,23 @@ export default function App(): JSX.Element {
 
     const stream = new EventSource("/api/stream");
 
-    stream.addEventListener("repo-changed", () => {
+    stream.addEventListener("repo-changed", (event) => {
       void (async () => {
         try {
-          await refreshBootstrap(selectedPath);
-          if (selectedPath) {
-            await refreshFile(selectedPath, true);
+          let eventPath = "";
+          try {
+            const payload = JSON.parse((event as MessageEvent<string>).data) as {
+              relativePath?: unknown;
+            };
+            if (typeof payload.relativePath === "string") {
+              eventPath = payload.relativePath;
+            }
+          } catch {
+            // 无法解析事件内容时仍可使用当前选中路径刷新。
+          }
+          const nextPath = await refreshBootstrap(eventPath || selectedPath);
+          if (nextPath) {
+            await refreshFile(nextPath, true);
           }
           setLiveNotice(editorDirty ? "仓库已更新，预览已刷新" : "仓库内容已同步刷新");
         } catch (fetchError) {
@@ -969,7 +1119,9 @@ export default function App(): JSX.Element {
     setMessage(null);
     try {
       const payload = await requestJson<EnvironmentSettingsResponse>("/api/settings/environments");
+      setTenantDraft(payload.tenants);
       setEnvironmentDraft(payload.environments);
+      setSelectedSettingsTenantId(payload.tenants[0]?.id ?? "");
       setActiveDialog({ type: "environment-settings" });
     } catch (settingsError) {
       if (handleAuthRequired(settingsError)) {
@@ -985,30 +1137,95 @@ export default function App(): JSX.Element {
     );
   }
 
-  function addEnvironmentDraft(): void {
-    setEnvironmentDraft((current) => [
-      ...current,
-      createBlankEnvironment(current.length, current[current.length - 1]),
-    ]);
+  function addEnvironmentDraft(tenantId?: string): void {
+    const tenant = tenantDraft.find((item) => item.id === tenantId) ?? tenantDraft[0];
+    if (!tenant) return;
+    setEnvironmentDraft((current) => {
+      return [...current, createBlankEnvironment(current.length, tenant.id, tenant.root)];
+    });
   }
 
   function removeEnvironmentDraft(index: number): void {
     setEnvironmentDraft((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
+  function updateTenantDraft(index: number, patch: Partial<RepoTenantOption>): void {
+    const previousTenant = tenantDraft[index];
+    setTenantDraft((current) =>
+      current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
+    );
+    if (previousTenant && patch.root !== undefined) {
+      setEnvironmentDraft((current) =>
+        current.map((environment) => {
+          if (environment.tenantId !== previousTenant.id) return environment;
+          const suffix = getEnvironmentRootSuffix(environment.root, previousTenant.root);
+          return { ...environment, root: buildEnvironmentRoot(patch.root ?? "", suffix) };
+        }),
+      );
+    }
+  }
+
+  function addTenantDraft(): void {
+    const tenant = createBlankTenant(tenantDraft.length);
+    setTenantDraft((current) => [...current, tenant]);
+    setSelectedSettingsTenantId(tenant.id);
+  }
+
+  function removeTenantDraft(index: number): void {
+    const tenant = tenantDraft[index];
+    if (!tenant) return;
+    const remainingTenants = tenantDraft.filter((_, itemIndex) => itemIndex !== index);
+    setTenantDraft((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setEnvironmentDraft((current) => current.filter((item) => item.tenantId !== tenant.id));
+    if (selectedSettingsTenantId === tenant.id) {
+      setSelectedSettingsTenantId(
+        remainingTenants[Math.min(index, remainingTenants.length - 1)]?.id ?? "",
+      );
+    }
+  }
+
   async function saveEnvironmentSettings(): Promise<void> {
+    const normalizedTenants = tenantDraft.map((item) => ({
+      ...item,
+      label: item.label.trim(),
+      root: item.root.trim().replace(/^\/+|\/+$/g, ""),
+    }));
     const normalized = environmentDraft.map((item, index) => ({
       ...item,
       id: item.id.trim() || createEnvironmentId(item.label, index),
       label: item.label.trim(),
       root: item.root.trim().replace(/^\/+|\/+$/g, ""),
     }));
+    if (!normalizedTenants.length) {
+      setError("至少需要保留一个租户配置");
+      return;
+    }
+    if (normalizedTenants.some((item) => !item.label || !item.root)) {
+      setError("租户名称和租户目录不能为空");
+      return;
+    }
     if (!normalized.length) {
       setError("至少需要保留一个环境配置");
       return;
     }
     if (normalized.some((item) => !item.label || !item.root)) {
       setError("环境名称和展示目录不能为空");
+      return;
+    }
+    if (
+      normalizedTenants.some((tenant) => !normalized.some((item) => item.tenantId === tenant.id))
+    ) {
+      setError("每个租户至少需要配置一个环境");
+      return;
+    }
+    const tenantById = new Map(normalizedTenants.map((item) => [item.id, item]));
+    if (
+      normalized.some((item) => {
+        const tenant = tenantById.get(item.tenantId);
+        return !tenant || !isValidEnvironmentRoot(item.root, tenant.root);
+      })
+    ) {
+      setError("环境路径必须填写租户目录后的有效相对路径，且不能包含 . 或 .. 路径段");
       return;
     }
 
@@ -1019,9 +1236,11 @@ export default function App(): JSX.Element {
       const payload = await requestJson<EnvironmentSettingsResponse>("/api/settings/environments", {
         method: "PUT",
         body: JSON.stringify({
+          tenants: normalizedTenants,
           environments: normalized,
         }),
       });
+      setTenantDraft(payload.tenants);
       setEnvironmentDraft(payload.environments);
       await refreshBootstrap(selectedPath || undefined);
       setActiveDialog(null);
@@ -1098,10 +1317,70 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function submitConfigFileDialog(relativePath: string): Promise<void> {
+    const environment = bootstrap?.config.environments.find(
+      (item) => item.id === selectedEnvironment && item.kind === "config",
+    );
+    if (!environment || activeDialog?.type !== "config-file") return;
+
+    const dialog = activeDialog;
+
+    setConfigFileOperation(true);
+    setError(null);
+    try {
+      const result = await requestJson<{ head: string; path: string }>(
+        dialog.mode === "create" ? "/api/config-files" : "/api/config-files/rename",
+        {
+          method: "POST",
+          body: JSON.stringify(
+            dialog.mode === "create"
+              ? { environmentId: environment.id, relativePath }
+              : { path: dialog.path, relativePath },
+          ),
+        },
+      );
+      setActiveDialog(null);
+      await refreshBootstrap(result.path);
+      setMessage(
+        dialog.mode === "create" ? "配置文件已创建并提交" : "配置文件已重命名并提交",
+      );
+    } catch (operationError) {
+      if (!handleAuthRequired(operationError)) setError((operationError as Error).message);
+    } finally {
+      setConfigFileOperation(false);
+    }
+  }
+
+  async function deleteConfig(pathValue: string): Promise<void> {
+    if (!window.confirm(`确认删除配置文件 ${pathValue}？删除会立即提交并推送。`)) return;
+    setConfigFileOperation(true);
+    setError(null);
+    try {
+      await requestJson<{ head: string; path: string }>("/api/config-files", {
+        method: "DELETE",
+        body: JSON.stringify({ path: pathValue }),
+      });
+      await refreshBootstrap(undefined);
+      setMessage("配置文件已删除并推送");
+    } catch (operationError) {
+      if (!handleAuthRequired(operationError)) setError((operationError as Error).message);
+    } finally {
+      setConfigFileOperation(false);
+    }
+  }
+
   const isFragmentLibrary = activeEnvironment?.kind === "fragment-library";
   const selectedFragmentRelativePath =
     isFragmentLibrary && selectedPath && activeEnvironment
       ? (getPathWithinRoot(selectedPath, activeEnvironment.root) ?? "")
+      : "";
+  const configFileDialogPath =
+    activeDialog?.type === "config-file" && activeDialog.mode === "rename"
+      ? activeDialog.path
+      : "";
+  const selectedConfigRelativePath =
+    !isFragmentLibrary && configFileDialogPath && activeEnvironment
+      ? (getPathWithinRoot(configFileDialogPath, activeEnvironment.root) ?? "")
       : "";
   const selectedFileEnvironment =
     environmentOptions.find(
@@ -1117,6 +1396,11 @@ export default function App(): JSX.Element {
     authUser?.role !== "admin" &&
     (selectedFileEnvironment?.requiresAdminToEdit ??
       isProtectedEnvironmentId(selectedFileEnvironment?.id));
+  const isActiveEnvironmentReadOnly =
+    authUser?.role !== "admin" &&
+    (activeEnvironment?.requiresAdminToEdit ?? isProtectedEnvironmentId(activeEnvironment?.id));
+  const fileOperationInProgress = fragmentFileOperation || configFileOperation;
+  const canOperateCurrentEnvironmentFiles = !fileOperationInProgress && !isActiveEnvironmentReadOnly;
   const environmentFiles = useMemo(
     () =>
       activeEnvironment
@@ -1196,17 +1480,28 @@ export default function App(): JSX.Element {
       return;
     }
 
-    const line = view.state.doc.lineAt(match.from);
     const block = view.lineBlockAt(match.from);
-    const maxScrollTop = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
     view.dispatch({
       selection: EditorSelection.single(match.from, match.to),
     });
+
+    const scrollContainer =
+      editorViewMode === "diff"
+        ? (view.dom.closest<HTMLElement>(".cm-mergeView") ?? view.scrollDOM)
+        : view.scrollDOM;
+    const blockTop =
+      scrollContainer === view.scrollDOM
+        ? block.top
+        : view.dom.getBoundingClientRect().top -
+        scrollContainer.getBoundingClientRect().top +
+        scrollContainer.scrollTop +
+        block.top;
+    const maxScrollTop = scrollContainer.scrollHeight - scrollContainer.clientHeight;
     const nextScrollTop = Math.max(
       0,
-      Math.min(maxScrollTop, block.top - view.scrollDOM.clientHeight / 2 + block.height / 2),
+      Math.min(maxScrollTop, blockTop - scrollContainer.clientHeight / 2 + block.height / 2),
     );
-    view.scrollDOM.scrollTop = nextScrollTop;
+    scrollContainer.scrollTop = nextScrollTop;
   }
 
   function findAdjacentEditorSearchMatch(direction: -1 | 1): void {
@@ -1215,6 +1510,15 @@ export default function App(): JSX.Element {
       setEditorContent(currentContent);
     }
     const match = editorSearchController.findAdjacent(currentContent, direction);
+    if (match) scrollToEditorSearchMatch(match);
+  }
+
+  function updateEditorSearch(value: string): void {
+    const currentContent = getLatestEditorContent();
+    if (currentContent !== editorContent) {
+      setEditorContent(currentContent);
+    }
+    const match = editorSearchController.setInput(value, currentContent);
     if (match) scrollToEditorSearchMatch(match);
   }
 
@@ -1314,11 +1618,23 @@ export default function App(): JSX.Element {
           onSubmit={submitFragmentFileDialog}
         />
       ) : null}
+      {configFileDialogMode ? (
+        <ConfigFileDialog
+          mode={configFileDialogMode}
+          initialRelativePath={
+            configFileDialogMode === "rename" ? selectedConfigRelativePath : ""
+          }
+          onClose={() => setActiveDialog(null)}
+          onSubmit={submitConfigFileDialog}
+        />
+      ) : null}
       {fragmentBatchOpen && selectedPath ? (
         <PromptFragmentBatchDialog
           sourcePath={selectedPath}
           environments={environmentOptions.filter(
-            (item) => authUser?.role === "admin" || !item.requiresAdminToEdit,
+            (item) =>
+              item.tenantId === activeTenant?.id &&
+              (authUser?.role === "admin" || !item.requiresAdminToEdit),
           )}
           onClose={() => setActiveDialog(null)}
           onError={(batchError) => setError(batchError)}
@@ -1484,7 +1800,7 @@ export default function App(): JSX.Element {
                     }}
                     type="button"
                   >
-                    环境配置
+                    租户与环境配置
                   </button>
                 ) : null}
                 <button
@@ -1520,11 +1836,11 @@ export default function App(): JSX.Element {
             setActivationCode("");
           }}
         >
-          <form
-            onSubmit={(event) => void submitActivationCode(event)}
-          >
+          <form onSubmit={(event) => void submitActivationCode(event)}>
             <div className="mb-4">
-              <h2 className="m-0 text-xl" id="activation-dialog-title">输入激活码</h2>
+              <h2 className="m-0 text-xl" id="activation-dialog-title">
+                输入激活码
+              </h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 激活码和当前账号绑定，校验成功后该账号会升级为管理员。
               </p>
@@ -1563,118 +1879,335 @@ export default function App(): JSX.Element {
 
       {environmentSettingsDialogOpen ? (
         <Modal
-          className="max-h-[calc(100vh-2rem)] max-w-5xl overflow-auto p-ui-4"
+          className="flex h-[min(760px,calc(100vh-2rem))] max-w-6xl flex-col overflow-hidden"
           closeDisabled={savingEnvironmentSettings}
           labelledBy="environment-settings-title"
           onClose={() => {
             setActiveDialog(null);
+            setTenantDraft([]);
             setEnvironmentDraft([]);
+            setSelectedSettingsTenantId("");
           }}
         >
-            <div className="mb-4">
-              <h2 className="m-0 text-lg" id="environment-settings-title">环境配置</h2>
-              <div className="mt-1.5 text-sm text-muted-foreground">
-                配置环境名称、类型、展示目录和编辑权限。
-              </div>
+          <div className="border-b border-ui-border px-ui-5 py-ui-4">
+            <h2 className="m-0 text-lg" id="environment-settings-title">
+              租户与环境配置
+            </h2>
+            <div className="mt-1.5 text-sm text-muted-foreground">
+              配置结构为“租户 → 环境”。选择左侧租户后，在右侧维护该租户及其环境。
             </div>
+          </div>
 
-            <div className="grid gap-3">
-              {environmentDraft.map((environment, index) => (
-                <div
-                  className="grid gap-ui-2 rounded-ui-md border border-ui-border bg-surface-subtle p-ui-3"
-                  key={environment.id || index}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <strong className="text-foreground">环境 {index + 1}</strong>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <label className="inline-flex items-center gap-ui-2 text-sm font-semibold text-muted-foreground">
-                        <input
-                          checked={environment.requiresAdminToEdit}
-                          disabled={environment.kind === "fragment-library"}
-                          onChange={(event) =>
-                            updateEnvironmentDraft(index, {
-                              requiresAdminToEdit: event.target.checked,
-                            })
-                          }
-                          type="checkbox"
-                        />
-                        需要管理员权限编辑
-                      </label>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        disabled={environmentDraft.length <= 1}
-                        onClick={() => removeEnvironmentDraft(index)}
-                        type="button"
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="grid gap-3 xl:grid-cols-[minmax(160px,0.7fr)_minmax(180px,0.7fr)_minmax(320px,1.4fr)]">
-                    <label className={formRowClass}>
-                      <span className={formLabelClass}>环境名称</span>
-                      <input
-                        className={inputClass}
-                        onChange={(event) =>
-                          updateEnvironmentDraft(index, {
-                            label: event.target.value,
-                          })
-                        }
-                        value={environment.label}
-                      />
-                    </label>
-                    <label className={formRowClass}>
-                      <span className={formLabelClass}>环境类型</span>
-                      <select
-                        className={inputClass}
-                        onChange={(event) => {
-                          const kind =
-                            event.target.value === "fragment-library"
-                              ? "fragment-library"
-                              : "config";
-                          updateEnvironmentDraft(index, {
-                            kind,
-                            requiresAdminToEdit:
-                              kind === "fragment-library" ? false : environment.requiresAdminToEdit,
-                          });
-                        }}
-                        value={environment.kind}
-                      >
-                        <option value="config">普通配置环境</option>
-                        <option value="fragment-library">提示词片段库</option>
-                      </select>
-                    </label>
-                    <label className={formRowClass}>
-                      <span className={formLabelClass}>展示目录</span>
-                      <input
-                        className={inputClass}
-                        onChange={(event) =>
-                          updateEnvironmentDraft(index, {
-                            root: event.target.value,
-                          })
-                        }
-                        placeholder="nacos-config/config/dev"
-                        value={environment.root}
-                      />
-                    </label>
+          <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
+            <aside className="flex min-h-0 flex-col border-r border-ui-border bg-surface-subtle">
+              <div className="flex items-center justify-between border-b border-ui-border px-ui-3 py-ui-3">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">租户</div>
+                  <div className="mt-0.5 text-xs text-subtle-foreground">
+                    共 {tenantDraft.length} 个
                   </div>
                 </div>
-              ))}
-            </div>
+                <Button
+                  aria-label="新增租户"
+                  onClick={addTenantDraft}
+                  size="icon"
+                  type="button"
+                  variant="secondary"
+                >
+                  <svg
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto p-ui-2">
+                {tenantDraft.map((tenant) => {
+                  const selected = tenant.id === selectedSettingsTenant?.id;
+                  const environmentCount = environmentDraft.filter(
+                    (item) => item.tenantId === tenant.id,
+                  ).length;
+                  return (
+                    <button
+                      aria-current={selected ? "true" : undefined}
+                      className={cn(
+                        "mb-ui-1 flex w-full items-center gap-ui-2 rounded-ui-md border px-ui-3 py-ui-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/20",
+                        selected
+                          ? "border-primary/20 bg-surface text-foreground shadow-ui-xs"
+                          : "border-transparent text-muted-foreground hover:bg-surface-muted hover:text-foreground",
+                      )}
+                      key={tenant.id}
+                      onClick={() => setSelectedSettingsTenantId(tenant.id)}
+                      type="button"
+                    >
+                      <span
+                        className={cn(
+                          "grid h-8 w-8 shrink-0 place-items-center rounded-ui-sm text-xs font-bold",
+                          selected
+                            ? "bg-primary-soft text-primary"
+                            : "bg-surface-muted text-muted-foreground",
+                        )}
+                      >
+                        {tenant.label.trim().slice(0, 1).toLocaleUpperCase() || "租"}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">
+                          {tenant.label || "未命名租户"}
+                        </span>
+                        <span className="mt-0.5 block truncate text-[11px] text-subtle-foreground">
+                          {environmentCount} 个环境
+                        </span>
+                      </span>
+                      <svg
+                        aria-hidden="true"
+                        className="h-4 w-4 shrink-0 text-subtle-foreground"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
 
-            <div className="mt-3">
-              <Button variant="secondary" onClick={addEnvironmentDraft} type="button">
-                新增环境
-              </Button>
-            </div>
+            <div className="min-h-0 overflow-auto bg-surface p-ui-4">
+              {selectedSettingsTenant ? (
+                (() => {
+                  const tenantIndex = tenantDraft.findIndex(
+                    (item) => item.id === selectedSettingsTenant.id,
+                  );
+                  const tenantEnvironments = environmentDraft
+                    .map((environment, index) => ({ environment, index }))
+                    .filter(
+                      ({ environment }) => environment.tenantId === selectedSettingsTenant.id,
+                    );
+                  return (
+                    <div className="mx-auto grid max-w-4xl gap-ui-4">
+                      <div className="flex flex-wrap items-center justify-between gap-ui-3">
+                        <div className="flex min-w-0 items-center gap-ui-2 text-sm">
+                          <span className="font-semibold text-muted-foreground">租户</span>
+                          <svg
+                            aria-hidden="true"
+                            className="h-3.5 w-3.5 text-subtle-foreground"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="m9 18 6-6-6-6" />
+                          </svg>
+                          <span className="truncate font-semibold text-foreground">
+                            {selectedSettingsTenant.label || "未命名租户"}
+                          </span>
+                        </div>
+                        <Button
+                          disabled={tenantDraft.length <= 1}
+                          onClick={() => removeTenantDraft(tenantIndex)}
+                          size="sm"
+                          type="button"
+                          variant="danger"
+                        >
+                          删除租户
+                        </Button>
+                      </div>
 
-            <div className="mt-4 flex justify-end gap-2">
+                      <section className="rounded-ui-lg border border-ui-border bg-surface-subtle p-ui-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className={formRowClass}>
+                            <span className={formLabelClass}>租户名称</span>
+                            <input
+                              className={inputClass}
+                              onChange={(event) =>
+                                updateTenantDraft(tenantIndex, { label: event.target.value })
+                              }
+                              placeholder="例如：config"
+                              value={selectedSettingsTenant.label}
+                            />
+                          </label>
+                          <label className={formRowClass}>
+                            <span className={formLabelClass}>租户目录</span>
+                            <input
+                              className={inputClass}
+                              onChange={(event) =>
+                                updateTenantDraft(tenantIndex, { root: event.target.value })
+                              }
+                              placeholder="nacos-config/config"
+                              value={selectedSettingsTenant.root}
+                            />
+                          </label>
+                        </div>
+                      </section>
+
+                      <section>
+                        <div className="mb-ui-2 flex flex-wrap items-center justify-between gap-ui-3">
+                          <div>
+                            <div className="flex items-center gap-ui-2">
+                              <h3 className="m-0 text-base text-foreground">环境</h3>
+                              <span className="rounded-ui-full bg-surface-muted px-ui-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                {tenantEnvironments.length}
+                              </span>
+                            </div>
+                          </div>
+                          <Button
+                            onClick={() => addEnvironmentDraft(selectedSettingsTenant.id)}
+                            size="sm"
+                            type="button"
+                            variant="secondary"
+                          >
+                            <svg
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeWidth="2"
+                              viewBox="0 0 24 24"
+                            >
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            新增环境
+                          </Button>
+                        </div>
+
+                        <div className="grid gap-ui-2 pl-ui-3">
+                          {tenantEnvironments.map(({ environment, index }, environmentIndex) => (
+                            <div
+                              className="grid gap-ui-3 rounded-ui-lg border border-ui-border bg-surface p-ui-3 shadow-ui-xs"
+                              key={environment.id || index}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-ui-3">
+                                <div className="flex items-center gap-ui-2">
+                                  <span className="grid h-6 min-w-6 place-items-center rounded-ui-full bg-primary-soft px-1.5 text-[11px] font-bold text-primary">
+                                    {environmentIndex + 1}
+                                  </span>
+                                  <strong className="text-sm text-foreground">
+                                    {environment.label || "未命名环境"}
+                                  </strong>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-ui-3">
+                                  <label className="inline-flex items-center gap-ui-2 text-sm font-medium text-muted-foreground">
+                                    <input
+                                      checked={environment.requiresAdminToEdit}
+                                      disabled={environment.kind === "fragment-library"}
+                                      onChange={(event) =>
+                                        updateEnvironmentDraft(index, {
+                                          requiresAdminToEdit: event.target.checked,
+                                        })
+                                      }
+                                      type="checkbox"
+                                    />
+                                    仅管理员可编辑
+                                  </label>
+                                  <Button
+                                    disabled={tenantEnvironments.length <= 1}
+                                    onClick={() => removeEnvironmentDraft(index)}
+                                    size="sm"
+                                    type="button"
+                                    variant="danger"
+                                  >
+                                    删除
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="grid gap-3 xl:grid-cols-[minmax(150px,0.65fr)_minmax(180px,0.75fr)_minmax(300px,1.4fr)]">
+                                <label className={cn(formRowClass, "min-w-0")}>
+                                  <span className={formLabelClass}>环境名称</span>
+                                  <input
+                                    className={cn(inputClass, "min-w-0 w-full")}
+                                    onChange={(event) =>
+                                      updateEnvironmentDraft(index, { label: event.target.value })
+                                    }
+                                    placeholder="例如：dev"
+                                    value={environment.label}
+                                  />
+                                </label>
+                                <label className={cn(formRowClass, "min-w-0")}>
+                                  <span className={formLabelClass}>环境类型</span>
+                                  <select
+                                    className={cn(inputClass, "min-w-0 w-full")}
+                                    onChange={(event) => {
+                                      const kind =
+                                        event.target.value === "fragment-library"
+                                          ? "fragment-library"
+                                          : "config";
+                                      updateEnvironmentDraft(index, {
+                                        kind,
+                                        requiresAdminToEdit:
+                                          kind === "fragment-library"
+                                            ? false
+                                            : environment.requiresAdminToEdit,
+                                      });
+                                    }}
+                                    value={environment.kind}
+                                  >
+                                    <option value="config">普通配置环境</option>
+                                    <option value="fragment-library">提示词片段库</option>
+                                  </select>
+                                </label>
+                                <label className={cn(formRowClass, "min-w-0")}>
+                                  <span className={formLabelClass}>环境路径</span>
+                                  <span className="flex h-9 min-w-0 overflow-hidden rounded-ui-md border border-ui-border bg-surface shadow-ui-xs transition-[border-color,box-shadow] focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
+                                    <span
+                                      className="flex max-w-[62%] shrink-0 items-center truncate border-r border-ui-border bg-surface-muted px-ui-3 font-mono text-xs text-muted-foreground"
+                                      title={`${selectedSettingsTenant.root.replace(/^\/+|\/+$/g, "")}/`}
+                                    >
+                                      {selectedSettingsTenant.root.replace(/^\/+|\/+$/g, "") ||
+                                        "租户目录"}
+                                      /
+                                    </span>
+                                    <input
+                                      aria-label={`${environment.label || "环境"}的租户内相对路径`}
+                                      className="h-full min-w-0 flex-1 border-0 bg-transparent px-ui-3 font-mono text-sm text-foreground outline-none placeholder:text-subtle-foreground"
+                                      onChange={(event) =>
+                                        updateEnvironmentDraft(index, {
+                                          root: buildEnvironmentRoot(
+                                            selectedSettingsTenant.root,
+                                            event.target.value,
+                                          ),
+                                        })
+                                      }
+                                      placeholder="dev"
+                                      value={getEnvironmentRootSuffix(
+                                        environment.root,
+                                        selectedSettingsTenant.root,
+                                      )}
+                                    />
+                                  </span>
+                                </label>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  );
+                })()
+              ) : (
+                <div className={emptyBlockClass}>请先新增租户</div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end border-t border-ui-border bg-surface-subtle px-ui-5 py-ui-3">
+            <div className="flex gap-ui-2">
               <Button
                 variant="secondary"
                 onClick={() => {
                   setActiveDialog(null);
+                  setTenantDraft([]);
                   setEnvironmentDraft([]);
+                  setSelectedSettingsTenantId("");
                 }}
                 type="button"
               >
@@ -1686,9 +2219,10 @@ export default function App(): JSX.Element {
                 onClick={() => void saveEnvironmentSettings()}
                 type="button"
               >
-                {savingEnvironmentSettings ? "保存中..." : "保存"}
+                {savingEnvironmentSettings ? "保存中..." : "保存配置"}
               </Button>
             </div>
+          </div>
         </Modal>
       ) : null}
 
@@ -1702,8 +2236,13 @@ export default function App(): JSX.Element {
       >
         {!reviewOpen ? (
           <aside className="relative flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-ui-border bg-surface-subtle px-ui-3 pt-ui-3">
+            <TenantSwitcher
+              tenants={tenantOptions}
+              onValueChange={switchTenant}
+              value={activeTenant?.id ?? ""}
+            />
             <EnvironmentSwitcher
-              environments={environmentOptions}
+              environments={tenantEnvironmentOptions}
               onValueChange={switchEnvironment}
               value={activeEnvironment?.id ?? ""}
             />
@@ -1721,12 +2260,15 @@ export default function App(): JSX.Element {
                 />
                 <kbd className={searchShortcutClass}>{shortcutModifier}P</kbd>
               </label>
-              {isFragmentLibrary ? (
+              {activeEnvironment ? (
                 <ToolbarIconButton
                   className="h-9 w-9 shrink-0"
-                  disabled={fragmentFileOperation}
-                  label="新建片段"
-                  onClick={() => setActiveDialog({ type: "fragment-file", mode: "create" })}
+                  disabled={!canOperateCurrentEnvironmentFiles}
+                  label={isFragmentLibrary ? "新建片段" : "新建配置文件"}
+                  onClick={() => setActiveDialog({
+                    type: isFragmentLibrary ? "fragment-file" : "config-file",
+                    mode: "create",
+                  })}
                   variant="secondary"
                 >
                   <svg
@@ -1755,16 +2297,22 @@ export default function App(): JSX.Element {
                   selectedPath={selectedPath}
                   onSelect={setSelectedPath}
                   onRename={
-                    isFragmentLibrary && !fragmentFileOperation
+                    canOperateCurrentEnvironmentFiles
                       ? (pathValue) => {
                         setSelectedPath(pathValue);
-                        setActiveDialog({ type: "fragment-file", mode: "rename" });
+                        setActiveDialog(
+                          isFragmentLibrary
+                            ? { type: "fragment-file", mode: "rename" }
+                            : { type: "config-file", mode: "rename", path: pathValue },
+                        );
                       }
                       : undefined
                   }
                   onDelete={
-                    isFragmentLibrary && !fragmentFileOperation
-                      ? (pathValue) => void deleteFragment(pathValue)
+                    canOperateCurrentEnvironmentFiles
+                      ? (pathValue) => void (isFragmentLibrary
+                        ? deleteFragment(pathValue)
+                        : deleteConfig(pathValue))
                       : undefined
                   }
                   tone={isFragmentLibrary ? "fragment" : "config"}
@@ -1789,8 +2337,19 @@ export default function App(): JSX.Element {
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 className="m-0 text-lg">版本比对</h2>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    {activeEnvironment?.label ?? "当前环境"}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                    <span>
+                      租户：
+                      <span className="font-medium text-foreground">
+                        {activeTenant?.label ?? "当前租户"}
+                      </span>
+                    </span>
+                    <span>
+                      环境：
+                      <span className="font-medium text-foreground">
+                        {activeEnvironment?.label ?? "当前环境"}
+                      </span>
+                    </span>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -2143,7 +2702,7 @@ export default function App(): JSX.Element {
                     aria-label="搜索当前文件内容"
                     className={searchFieldInputClass}
                     disabled={!selectedPath}
-                    onChange={(event) => editorSearchController.setInput(event.target.value)}
+                    onChange={(event) => updateEditorSearch(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault();
@@ -2208,6 +2767,10 @@ export default function App(): JSX.Element {
                       disabled={!selectedPath || isProtectedFileReadOnly}
                       placeholderText="请选择要编辑的文件"
                       validationIssue={editorValidationIssue}
+                      searchMatches={editorSearchOpen ? editorSearchMatches : []}
+                      activeSearchMatchIndex={
+                        editorSearchOpen ? displayedEditorSearchIndex : -1
+                      }
                       onViewReady={(view) => {
                         editorViewRef.current = view;
                       }}
@@ -2234,6 +2797,10 @@ export default function App(): JSX.Element {
                         disabled={!selectedPath || isProtectedFileReadOnly}
                         placeholderText="请选择要编辑的文件"
                         validationIssue={editorValidationIssue}
+                        searchMatches={editorSearchOpen ? editorSearchMatches : []}
+                        activeSearchMatchIndex={
+                          editorSearchOpen ? displayedEditorSearchIndex : -1
+                        }
                         onViewReady={(view) => {
                           editorViewRef.current = view;
                         }}

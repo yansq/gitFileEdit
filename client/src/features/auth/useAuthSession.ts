@@ -15,7 +15,7 @@ const emptyLoginForm: LoginFormState = {
 
 export function useAuthSession(options: {
   onActivated: () => void;
-  onAuthenticated: () => Promise<void>;
+  onAuthenticated: (user: AuthUser) => Promise<void>;
   onError: (message: string | null) => void;
   onMessage: (message: string | null) => void;
   onSessionReset: () => void;
@@ -62,7 +62,7 @@ export function useAuthSession(options: {
         const payload = (await response.json()) as AuthResponse;
         if (cancelled) return;
         setUser(payload.user);
-        await callbacksRef.current.onAuthenticated();
+        await callbacksRef.current.onAuthenticated(payload.user);
       } catch (error) {
         if (!cancelled) callbacksRef.current.onError((error as Error).message);
       } finally {
@@ -98,7 +98,7 @@ export function useAuthSession(options: {
       );
       setUser(payload.user);
       setLoginForm(emptyLoginForm);
-      await callbacksRef.current.onAuthenticated();
+      await callbacksRef.current.onAuthenticated(payload.user);
     } catch (error) {
       if (!handleAuthRequired(error)) callbacksRef.current.onError((error as Error).message);
     } finally {

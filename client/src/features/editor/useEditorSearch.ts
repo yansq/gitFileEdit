@@ -9,7 +9,7 @@ interface EditorSearchState {
 
 type EditorSearchAction =
   | { type: "close" }
-  | { type: "inputChanged"; value: string }
+  | { type: "inputChanged"; value: string; index: number }
   | { type: "open" }
   | { type: "searched"; query: string; index: number };
 
@@ -27,7 +27,7 @@ function reducer(state: EditorSearchState, action: EditorSearchAction): EditorSe
     case "close":
       return state.open ? { ...state, open: false } : state;
     case "inputChanged":
-      return { ...state, input: action.value };
+      return { ...state, input: action.value, query: action.value, index: action.index };
     case "searched":
       return { ...state, query: action.query, index: action.index };
   }
@@ -77,8 +77,13 @@ export function useEditorSearch(content: string) {
     dispatch({ type: "close" });
   }
 
-  function setInput(value: string): void {
-    dispatch({ type: "inputChanged", value });
+  function setInput(
+    value: string,
+    currentContent: string = content,
+  ): { from: number; to: number } | null {
+    const nextMatches = findTextMatches(currentContent, value);
+    dispatch({ type: "inputChanged", value, index: nextMatches.length ? 0 : -1 });
+    return nextMatches[0] ?? null;
   }
 
   function findAdjacent(

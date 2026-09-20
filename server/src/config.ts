@@ -1,6 +1,12 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import type { AppConfig, GitSettingsSummary, RepoEnvironmentOption, RuntimeState } from "./types";
+import type {
+  AppConfig,
+  GitSettingsSummary,
+  RepoEnvironmentOption,
+  RepoTenantOption,
+  RuntimeState
+} from "./types";
 
 export const PROJECT_ROOT = path.resolve(__dirname, "../..");
 const APP_CONFIG_PATH = path.resolve(PROJECT_ROOT, "data/app.config.json");
@@ -8,9 +14,18 @@ const RUNTIME_STATE_PATH = path.resolve(PROJECT_ROOT, "data/runtime.json");
 const DEFAULT_CONFIG_ROOT = "nacos-config/config";
 const DEFAULT_REMOTE_URL = "http://12.103.118.207:10880/AI/aifp-config-tob.git";
 const DEFAULT_BRANCH = "main";
+const DEFAULT_TENANT_ID = "config";
+const DEFAULT_TENANTS: RepoTenantOption[] = [
+  {
+    id: DEFAULT_TENANT_ID,
+    label: "config",
+    root: DEFAULT_CONFIG_ROOT
+  }
+];
 const DEFAULT_ENVIRONMENTS: RepoEnvironmentOption[] = [
   {
     id: "dev",
+    tenantId: DEFAULT_TENANT_ID,
     label: "开发环境",
     root: `${DEFAULT_CONFIG_ROOT}/dev`,
     requiresAdminToEdit: false,
@@ -18,6 +33,7 @@ const DEFAULT_ENVIRONMENTS: RepoEnvironmentOption[] = [
   },
   {
     id: "sit",
+    tenantId: DEFAULT_TENANT_ID,
     label: "SIT环境",
     root: `${DEFAULT_CONFIG_ROOT}/sit`,
     requiresAdminToEdit: false,
@@ -25,6 +41,7 @@ const DEFAULT_ENVIRONMENTS: RepoEnvironmentOption[] = [
   },
   {
     id: "uat",
+    tenantId: DEFAULT_TENANT_ID,
     label: "UAT环境",
     root: `${DEFAULT_CONFIG_ROOT}/uat`,
     requiresAdminToEdit: true,
@@ -59,6 +76,7 @@ const DEFAULT_APP_CONFIG: AppConfig = {
       username: "rhb",
       password: "nbcb,111"
     },
+    tenants: DEFAULT_TENANTS,
     commitMessagePrefix: "config: ",
     cloneOnStart: true
   }
@@ -87,6 +105,16 @@ function normalizeRoot(root: string): string {
   return root.trim().replace(/^\/+|\/+$/g, "");
 }
 
+export function isEnvironmentRootWithinTenant(environmentRoot: string, tenantRoot: string): boolean {
+  if (environmentRoot.includes("\\") || !environmentRoot.startsWith(`${tenantRoot}/`)) {
+    return false;
+  }
+  const suffix = environmentRoot.slice(tenantRoot.length + 1);
+  return Boolean(suffix) && suffix.split("/").every(
+    (segment) => segment && segment !== "." && segment !== ".."
+  );
+}
+
 function getDefaultEnvironmentRoots(configRoot: string): RepoEnvironmentOption[] {
   const normalizedConfigRoot = normalizeRoot(configRoot || DEFAULT_CONFIG_ROOT);
   return DEFAULT_ENVIRONMENTS.map((item) => ({
@@ -95,9 +123,43 @@ function getDefaultEnvironmentRoots(configRoot: string): RepoEnvironmentOption[]
   }));
 }
 
+function createOptionId(value: string, fallback: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
+}
+
+function normalizeTenantOptions(
+  rawTenants: RepoTenantOption[] | undefined,
+  configRoot: string
+): RepoTenantOption[] {
+  const normalizedConfigRoot = normalizeRoot(configRoot || DEFAULT_CONFIG_ROOT);
+  const inferredId = createOptionId(path.posix.basename(normalizedConfigRoot), DEFAULT_TENANT_ID);
+  const source = rawTenants?.length
+    ? rawTenants
+    : [{ id: inferredId, label: inferredId, root: normalizedConfigRoot }];
+  const seenIds = new Set<string>();
+
+  return source
+    .map((item, index) => {
+      const baseId = createOptionId(String(item.id || item.label || ""), `tenant-${index + 1}`);
+      const id = seenIds.has(baseId) ? `tenant-${index + 1}` : baseId;
+      seenIds.add(id);
+      return {
+        id,
+        label: String(item.label || id).trim(),
+        root: normalizeRoot(String(item.root || ""))
+      };
+    })
+    .filter((item) => item.label && item.root);
+}
+
 function normalizeEnvironmentOptions(
   rawEnvironments: RepoEnvironmentOption[] | undefined,
-  configRoot: string
+  configRoot: string,
+  tenants: RepoTenantOption[]
 ): RepoEnvironmentOption[] {
   const source = rawEnvironments?.length
     ? rawEnvironments
@@ -116,10 +178,17 @@ function normalizeEnvironmentOptions(
       seenIds.add(uniqueId);
       const kind: RepoEnvironmentOption["kind"] =
         item.kind === "fragment-library" ? "fragment-library" : "config";
+      const root = normalizeRoot(String(item.root || fallback.root || ""));
+      const requestedTenantId = String(item.tenantId || "").trim();
+      const tenant = tenants.find((candidate) => candidate.id === requestedTenantId) ??
+        tenants.find(
+          (candidate) => root === candidate.root || root.startsWith(`${candidate.root}/`)
+        ) ?? tenants[0];
       return {
         id: uniqueId,
+        tenantId: tenant?.id ?? DEFAULT_TENANT_ID,
         label: String(item.label || fallback.label || uniqueId).trim(),
-        root: normalizeRoot(String(item.root || fallback.root || "")),
+        root,
         requiresAdminToEdit: kind === "fragment-library" ? false : Boolean(item.requiresAdminToEdit),
         kind
       };
@@ -131,6 +200,7 @@ function normalizeAppConfig(rawConfig: AppConfig): AppConfig {
   const remoteUrl = rawConfig.repo?.remoteUrl || DEFAULT_APP_CONFIG.repo.remoteUrl;
   const branch = rawConfig.repo?.branch || DEFAULT_APP_CONFIG.repo.branch;
   const configRoot = rawConfig.repo?.configRoot || DEFAULT_APP_CONFIG.repo.configRoot || DEFAULT_CONFIG_ROOT;
+  const tenants = normalizeTenantOptions(rawConfig.repo?.tenants, configRoot);
   return {
     server: {
       port: rawConfig.server?.port || DEFAULT_APP_CONFIG.server.port
@@ -149,9 +219,11 @@ function normalizeAppConfig(rawConfig: AppConfig): AppConfig {
         username: rawConfig.repo?.auth?.username || DEFAULT_APP_CONFIG.repo.auth.username,
         password: rawConfig.repo?.auth?.password || DEFAULT_APP_CONFIG.repo.auth.password
       },
+      tenants,
       environments: normalizeEnvironmentOptions(
         rawConfig.repo?.environments,
-        configRoot
+        configRoot,
+        tenants
       ),
       commitMessagePrefix:
         rawConfig.repo?.commitMessagePrefix ?? DEFAULT_APP_CONFIG.repo.commitMessagePrefix,
@@ -198,9 +270,11 @@ export async function updateEnvironmentOptions(
   environments: RepoEnvironmentOption[]
 ): Promise<AppConfig> {
   const current = await loadAppConfig();
+  const tenants = getTenantOptions(current);
   const normalizedEnvironments = normalizeEnvironmentOptions(
     environments,
-    current.repo.configRoot || DEFAULT_CONFIG_ROOT
+    current.repo.configRoot || DEFAULT_CONFIG_ROOT,
+    tenants
   );
   if (!normalizedEnvironments.length) {
     throw new Error("至少需要保留一个环境配置");
@@ -210,6 +284,54 @@ export async function updateEnvironmentOptions(
     ...current,
     repo: {
       ...current.repo,
+      environments: normalizedEnvironments,
+      visibleRoots: normalizedEnvironments.map((item) => item.root)
+    }
+  });
+}
+
+export async function updateTenantEnvironmentOptions(
+  tenants: RepoTenantOption[],
+  environments: RepoEnvironmentOption[]
+): Promise<AppConfig> {
+  const current = await loadAppConfig();
+  const normalizedTenants = normalizeTenantOptions(
+    tenants,
+    current.repo.configRoot || DEFAULT_CONFIG_ROOT
+  );
+  if (!normalizedTenants.length) {
+    throw new Error("至少需要保留一个租户配置");
+  }
+  const normalizedEnvironments = normalizeEnvironmentOptions(
+    environments,
+    current.repo.configRoot || DEFAULT_CONFIG_ROOT,
+    normalizedTenants
+  );
+  if (!normalizedEnvironments.length) {
+    throw new Error("至少需要保留一个环境配置");
+  }
+  const tenantIds = new Set(normalizedTenants.map((item) => item.id));
+  if (normalizedEnvironments.some((item) => !tenantIds.has(item.tenantId))) {
+    throw new Error("环境必须关联有效租户");
+  }
+  if (normalizedTenants.some(
+    (tenant) => !normalizedEnvironments.some((environment) => environment.tenantId === tenant.id)
+  )) {
+    throw new Error("每个租户至少需要配置一个环境");
+  }
+  const tenantsById = new Map(normalizedTenants.map((item) => [item.id, item]));
+  if (normalizedEnvironments.some((environment) => {
+    const tenant = tenantsById.get(environment.tenantId);
+    return !tenant || !isEnvironmentRootWithinTenant(environment.root, tenant.root);
+  })) {
+    throw new Error("环境路径必须是租户目录下的有效相对路径");
+  }
+
+  return saveAppConfig({
+    ...current,
+    repo: {
+      ...current.repo,
+      tenants: normalizedTenants,
       environments: normalizedEnvironments,
       visibleRoots: normalizedEnvironments.map((item) => item.root)
     }
@@ -237,8 +359,17 @@ export function normalizeVisibleRoots(config: AppConfig): string[] {
 }
 
 export function getEnvironmentOptions(config: AppConfig): RepoEnvironmentOption[] {
+  const tenants = getTenantOptions(config);
   return normalizeEnvironmentOptions(
     config.repo.environments,
+    config.repo.configRoot || DEFAULT_CONFIG_ROOT,
+    tenants
+  );
+}
+
+export function getTenantOptions(config: AppConfig): RepoTenantOption[] {
+  return normalizeTenantOptions(
+    config.repo.tenants,
     config.repo.configRoot || DEFAULT_CONFIG_ROOT
   );
 }

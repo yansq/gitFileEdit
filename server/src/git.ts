@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import {
   getEnvironmentOptions,
+  getTenantOptions,
   normalizeVisibleRoots,
   resolveRepoPath
 } from "./config";
@@ -77,7 +78,10 @@ function normalizeAllowedFilePath(config: AppConfig, repoPath: string, filePath:
 }
 
 function getEnvironmentLabelForFile(config: AppConfig, repoRelativePath: string): string | null {
-  return getEnvironmentForFile(config, repoRelativePath)?.label ?? null;
+  const environment = getEnvironmentForFile(config, repoRelativePath);
+  if (!environment) return null;
+  const tenant = getTenantOptions(config).find((item) => item.id === environment.tenantId);
+  return tenant ? `${tenant.label}/${environment.label}` : environment.label;
 }
 
 function getEnvironmentRoot(config: AppConfig, repoPath: string, environmentId: string): string {
@@ -727,19 +731,20 @@ export async function readFileDetail(
   const repoPath = resolveRepoPath(config);
   const repoRelativePath = normalizeAllowedFilePath(config, repoPath, filePath);
   const absolutePath = path.resolve(repoPath, repoRelativePath);
-  const [
-    content,
-    remoteContent,
-    headContent,
-    statusOutput,
-    fileStats,
-    history,
-    baseHead,
-    baseBlob,
-    remoteHead,
-    remoteBlob
-  ] =
-    await Promise.all([
+  let details: [
+    string,
+    string,
+    string,
+    string,
+    Awaited<ReturnType<typeof stat>>,
+    CommitSummary[],
+    string | null,
+    string | null,
+    string | null,
+    string | null
+  ];
+  try {
+    details = await Promise.all([
       readFile(absolutePath, "utf8"),
       readRemoteTrackingFile(repoPath, config.repo.branch, repoRelativePath),
       readGitFile(repoPath, "HEAD", repoRelativePath),
@@ -753,6 +758,26 @@ export async function readFileDetail(
       readGitRef(repoPath, `origin/${config.repo.branch}`),
       readGitBlobId(repoPath, `origin/${config.repo.branch}`, repoRelativePath)
     ]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw Object.assign(new Error("文件不存在或已被重命名，请刷新文件列表"), {
+        statusCode: 404
+      });
+    }
+    throw error;
+  }
+  const [
+    content,
+    remoteContent,
+    headContent,
+    statusOutput,
+    fileStats,
+    history,
+    baseHead,
+    baseBlob,
+    remoteHead,
+    remoteBlob
+  ] = details;
 
   return {
     path: repoRelativePath,
@@ -1079,7 +1104,7 @@ async function ensureFastForwardedRemote(config: AppConfig, repoPath: string): P
 async function assertPathsClean(repoPath: string, paths: string[]): Promise<void> {
   const status = await runGit(["status", "--porcelain", "--", ...paths], { cwd: repoPath });
   if (status.trim()) {
-    throw Object.assign(new Error("片段文件存在未提交修改，请先处理后重试"), { statusCode: 409 });
+    throw Object.assign(new Error("文件存在未提交修改，请先处理后重试"), { statusCode: 409 });
   }
 }
 
@@ -1405,6 +1430,143 @@ export async function deletePromptFragmentFile(
     await runGit(["rm", "--", filePath], { cwd: repoPath });
     await runGit(
       [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}删除提示词片段 ${filePath.split("/").pop()}`.trim(), "--", filePath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: filePath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [filePath], committed);
+    throw error;
+  }
+}
+
+function normalizeConfigRelativePath(relativePathValue: string): string {
+  const relativePath = relativePathValue.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!relativePath || relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error("请输入当前环境内的有效文件路径");
+  }
+  return relativePath;
+}
+
+function getConfigEnvironment(config: AppConfig, environmentId: string) {
+  const environment = getEnvironmentOptions(config).find((item) => item.id === environmentId);
+  if (!environment || environment.kind !== "config") {
+    throw new Error("所选环境不是普通配置环境");
+  }
+  return environment;
+}
+
+function getInitialConfigFileContent(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".json":
+    case ".yaml":
+    case ".yml":
+      return "{}\n";
+    case ".xml":
+      return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<config>\n</config>\n";
+    default:
+      return "";
+  }
+}
+
+export async function createConfigFile(
+  config: AppConfig,
+  input: { environmentId: string; relativePath: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const environment = getConfigEnvironment(config, input.environmentId);
+  const repoPath = resolveRepoPath(config);
+  const relativePath = normalizeConfigRelativePath(input.relativePath);
+  const filePath = normalizeRepoRelativePath(repoPath, `${environment.root}/${relativePath}`);
+  if (!isInVisibleRoots(filePath, [environment.root]) || !isAllowedConfigFile(config, filePath)) {
+    throw new Error("配置文件路径或扩展名不在允许范围内");
+  }
+  const content = getInitialConfigFileContent(filePath);
+  validateConfigFileContent(filePath, content);
+
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [filePath]);
+  if (await readGitBlobId(repoPath, `origin/${config.repo.branch}`, filePath)) {
+    throw new Error("配置文件已经存在");
+  }
+  let committed = false;
+  try {
+    await mkdir(path.dirname(path.resolve(repoPath, filePath)), { recursive: true });
+    await writeFile(path.resolve(repoPath, filePath), content, "utf8");
+    await runGit(["add", "--", filePath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}新建配置文件 ${relativePath}`.trim(), "--", filePath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: filePath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [filePath], committed);
+    await unlink(path.resolve(repoPath, filePath)).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function renameConfigFile(
+  config: AppConfig,
+  input: { path: string; relativePath: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const repoPath = resolveRepoPath(config);
+  const sourcePath = normalizeAllowedFilePath(config, repoPath, input.path);
+  const environment = getEnvironmentForFile(config, sourcePath);
+  if (!environment || environment.kind !== "config") throw new Error("只能重命名普通配置文件");
+  const relativePath = normalizeConfigRelativePath(input.relativePath);
+  const targetPath = normalizeRepoRelativePath(repoPath, `${environment.root}/${relativePath}`);
+  if (!isInVisibleRoots(targetPath, [environment.root]) || !isAllowedConfigFile(config, targetPath)) {
+    throw new Error("配置文件路径或扩展名不在允许范围内");
+  }
+  if (sourcePath === targetPath) throw new Error("新旧文件路径相同");
+
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [sourcePath, targetPath]);
+  const remoteRef = `origin/${config.repo.branch}`;
+  if (!(await readGitBlobId(repoPath, remoteRef, sourcePath))) throw new Error("来源配置文件不存在");
+  if (await readGitBlobId(repoPath, remoteRef, targetPath)) throw new Error("目标配置文件已经存在");
+  validateConfigFileContent(targetPath, await readGitFile(repoPath, remoteRef, sourcePath));
+  let committed = false;
+  try {
+    await mkdir(path.dirname(path.resolve(repoPath, targetPath)), { recursive: true });
+    await runGit(["mv", "--", sourcePath, targetPath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}重命名配置文件 ${relativePath}`.trim(), "--", sourcePath, targetPath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: targetPath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [sourcePath, targetPath], committed);
+    throw error;
+  }
+}
+
+export async function deleteConfigFile(
+  config: AppConfig,
+  input: { path: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const repoPath = resolveRepoPath(config);
+  const filePath = normalizeAllowedFilePath(config, repoPath, input.path);
+  const environment = getEnvironmentForFile(config, filePath);
+  if (!environment || environment.kind !== "config") throw new Error("只能删除普通配置文件");
+  await fetchRemoteBranch(config, repoPath);
+  const originalHead = await ensureFastForwardedRemote(config, repoPath);
+  await assertPathsClean(repoPath, [filePath]);
+  if (!(await readGitBlobId(repoPath, `origin/${config.repo.branch}`, filePath))) {
+    throw new Error("配置文件不存在");
+  }
+  let committed = false;
+  try {
+    await runGit(["rm", "--", filePath], { cwd: repoPath });
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", `${config.repo.commitMessagePrefix || ""}删除配置文件 ${filePath.split("/").pop()}`.trim(), "--", filePath],
       { cwd: repoPath }
     );
     committed = true;

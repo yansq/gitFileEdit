@@ -27,10 +27,17 @@ export interface RepoStatus {
 
 export interface RepoEnvironmentOption {
   id: string;
+  tenantId: string;
   label: string;
   root: string;
   requiresAdminToEdit: boolean;
   kind: "config" | "fragment-library";
+}
+
+export interface RepoTenantOption {
+  id: string;
+  label: string;
+  root: string;
 }
 
 export type PromptFragmentBatchItemStatus =
@@ -72,6 +79,7 @@ export interface BootstrapResponse {
   config: {
     remoteUrl: string;
     branch: string;
+    tenants: RepoTenantOption[];
     environments: RepoEnvironmentOption[];
     visibleRoots: string[];
     port: number;

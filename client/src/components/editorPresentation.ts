@@ -2,9 +2,34 @@ import { HighlightStyle } from "@codemirror/language";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import type { Extension } from "@codemirror/state";
+import { Decoration } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 
 export type EditorLanguageMode = "auto" | "xml";
+
+export interface EditorSearchMatch {
+  from: number;
+  to: number;
+}
+
+export function editorSearchDecorations(
+  matches: EditorSearchMatch[],
+  activeIndex: number,
+  docLength: number,
+) {
+  return Decoration.set(
+    matches
+      .filter((match) => match.from >= 0 && match.to > match.from && match.to <= docLength)
+      .map((match, index) =>
+        Decoration.mark({
+          class: index === activeIndex
+            ? "cm-searchMatch cm-searchMatch-active"
+            : "cm-searchMatch",
+        }).range(match.from, match.to),
+      ),
+    true,
+  );
+}
 
 export const editorFontFamily =
   '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", "Microsoft YaHei", "Liberation Mono", monospace';

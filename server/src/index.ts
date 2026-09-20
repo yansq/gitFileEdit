@@ -3,21 +3,24 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { activateAdmin, login, logout, me, register, requireAuth } from "./auth";
 import {
   getEnvironmentOptions,
+  getTenantOptions,
   loadAppConfig,
   loadRuntimeState,
   markLastSyncedAt,
   normalizeVisibleRoots,
   resolveRepoPath,
   toGitSettingsSummary,
-  updateEnvironmentOptions,
+  updateTenantEnvironmentOptions,
   updateCommitMessagePrefix
 } from "./config";
 import { ConfigFileValidationError } from "./fileValidation";
 import {
   commitAndPushFile,
   applyPromptFragmentBatch,
+  createConfigFile,
   createPromptFragmentBatchPreview,
   createPromptFragmentFile,
+  deleteConfigFile,
   deletePromptFragmentFile,
   discardRepoFileChanges,
   FileConflictError,
@@ -30,6 +33,7 @@ import {
   readFileHistorySnapshot,
   repoExists,
   restoreFileToHistoryCommit,
+  renameConfigFile,
   renamePromptFragmentFile,
   syncRepo
 } from "./git";
@@ -68,7 +72,18 @@ function isProtectedEnvironmentId(environmentId: string | null): boolean {
 
 function assertCanMutateFile(request: Request, config: AppConfig, filePath: string): void {
   const environmentId = getEnvironmentIdForFile(config, filePath);
+  assertCanMutateEnvironment(request, config, environmentId);
+}
+
+function assertCanMutateEnvironment(
+  request: Request,
+  config: AppConfig,
+  environmentId: string | null
+): void {
   const environment = getEnvironmentOptions(config).find((item) => item.id === environmentId);
+  if (!environment) {
+    throw Object.assign(new Error("未知环境"), { statusCode: 400 });
+  }
   const requiresAdminToEdit =
     environment?.requiresAdminToEdit ?? isProtectedEnvironmentId(environmentId);
   if (request.user?.role !== "admin" && requiresAdminToEdit) {
@@ -96,6 +111,7 @@ async function buildBootstrapPayload() {
   const files = repoStatus.ready ? await listRepoFiles(config) : [];
   const selectedFile = files[0]?.path ?? null;
   const environments = getEnvironmentOptions(config);
+  const tenants = getTenantOptions(config);
   const visibleRoots = normalizeVisibleRoots(config);
 
   logApiDebug("bootstrap.summary", {
@@ -118,6 +134,7 @@ async function buildBootstrapPayload() {
     config: {
       remoteUrl: config.repo.remoteUrl,
       branch: config.repo.branch,
+      tenants,
       environments,
       visibleRoots,
       port: config.server.port
@@ -330,6 +347,7 @@ app.get("/api/settings/environments", async (request, response, next) => {
     assertAdmin(request);
     const config = await loadAppConfig();
     response.json({
+      tenants: getTenantOptions(config),
       environments: getEnvironmentOptions(config)
     });
   } catch (error) {
@@ -343,8 +361,12 @@ app.put("/api/settings/environments", async (request, response, next) => {
     const environments = Array.isArray(request.body.environments)
       ? request.body.environments
       : [];
-    const config = await updateEnvironmentOptions(environments);
+    const tenants = Array.isArray(request.body.tenants)
+      ? request.body.tenants
+      : [];
+    const config = await updateTenantEnvironmentOptions(tenants, environments);
     response.json({
+      tenants: getTenantOptions(config),
       environments: getEnvironmentOptions(config)
     });
   } catch (error) {
@@ -517,6 +539,76 @@ app.post("/api/prompt-fragments/apply", async (request, response, next) => {
     response.json(result);
   } catch (error) {
     lastRepoError = toErrorMessage(error);
+    next(error);
+  }
+});
+
+app.post("/api/config-files", async (request, response, next) => {
+  try {
+    const environmentId = String(request.body.environmentId ?? "").trim();
+    const relativePath = String(request.body.relativePath ?? "").trim();
+    if (!environmentId || !relativePath) {
+      response.status(400).json({ error: "环境和文件路径不能为空" });
+      return;
+    }
+    const config = await loadAppConfig();
+    assertCanMutateEnvironment(request, config, environmentId);
+    const result = await withRepoMutationLock(() => createConfigFile(config, {
+      environmentId,
+      relativePath,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/config-files/rename", async (request, response, next) => {
+  try {
+    const filePath = String(request.body.path ?? "").trim();
+    const relativePath = String(request.body.relativePath ?? "").trim();
+    if (!filePath || !relativePath) {
+      response.status(400).json({ error: "来源文件和新文件路径不能为空" });
+      return;
+    }
+    const config = await loadAppConfig();
+    assertCanMutateFile(request, config, filePath);
+    const result = await withRepoMutationLock(() => renameConfigFile(config, {
+      path: filePath,
+      relativePath,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/config-files", async (request, response, next) => {
+  try {
+    const filePath = String(request.body.path ?? "").trim();
+    if (!filePath) {
+      response.status(400).json({ error: "缺少配置文件路径" });
+      return;
+    }
+    const config = await loadAppConfig();
+    assertCanMutateFile(request, config, filePath);
+    const result = await withRepoMutationLock(() => deleteConfigFile(config, {
+      path: filePath,
+      actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
     next(error);
   }
 });

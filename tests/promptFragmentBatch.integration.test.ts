@@ -79,6 +79,7 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
         environments: [
           {
             id: "templates",
+            tenantId: "config",
             label: "提示词片段",
             root: "templates",
             requiresAdminToEdit: true,
@@ -86,6 +87,7 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
           },
           {
             id: "dev",
+            tenantId: "config",
             label: "开发环境",
             root: "configs/dev",
             requiresAdminToEdit: false,
@@ -93,6 +95,7 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
           },
           {
             id: "uat",
+            tenantId: "config",
             label: "UAT环境",
             root: "configs/uat",
             requiresAdminToEdit: true,

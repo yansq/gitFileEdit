@@ -19,7 +19,9 @@ import {
   editorFontFamily,
   editorHighlightStyle,
   editorLanguageForPath,
+  editorSearchDecorations,
   type EditorLanguageMode,
+  type EditorSearchMatch,
 } from "./editorPresentation";
 
 const mergeEditorTheme = EditorView.theme({
@@ -47,6 +49,15 @@ const mergeEditorTheme = EditorView.theme({
     textDecoration: "underline wavy rgb(var(--color-danger))",
     textDecorationThickness: "1.5px",
     textUnderlineOffset: "3px"
+  },
+  ".cm-searchMatch": {
+    backgroundColor: "rgb(var(--color-warning-soft))",
+    borderRadius: "3px",
+    boxShadow: "inset 0 0 0 1px rgb(var(--color-warning) / 0.5)"
+  },
+  ".cm-searchMatch.cm-searchMatch-active": {
+    backgroundColor: "rgb(var(--color-warning) / 0.42)",
+    boxShadow: "inset 0 0 0 2px rgb(var(--color-warning) / 0.9)"
   }
 });
 
@@ -65,6 +76,8 @@ export function MergeConfigEditor(props: {
   disabled: boolean;
   placeholderText: string;
   validationIssue: ConfigEditorValidationIssue | null;
+  searchMatches?: EditorSearchMatch[];
+  activeSearchMatchIndex?: number;
   onChange: (view: EditorView) => void;
   onViewReady: (view: EditorView | null) => void;
 }): JSX.Element {
@@ -77,6 +90,7 @@ export function MergeConfigEditor(props: {
   const onChangeRef = useRef(props.onChange);
   const disabledCompartmentRef = useRef(new Compartment());
   const validationCompartmentRef = useRef(new Compartment());
+  const searchCompartmentRef = useRef(new Compartment());
   const originalLanguageCompartmentRef = useRef(new Compartment());
   const editableLanguageCompartmentRef = useRef(new Compartment());
 
@@ -123,6 +137,15 @@ export function MergeConfigEditor(props: {
           ]),
           validationCompartmentRef.current.of(
             EditorView.decorations.of(validationDecorations(props.validationIssue))
+          ),
+          searchCompartmentRef.current.of(
+            EditorView.decorations.of(
+              editorSearchDecorations(
+                props.searchMatches ?? [],
+                props.activeSearchMatchIndex ?? -1,
+                props.value.length,
+              ),
+            ),
           ),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update: ViewUpdate) => {
@@ -179,6 +202,22 @@ export function MergeConfigEditor(props: {
       ])
     });
   }, [props.disabled]);
+
+  useEffect(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    merge.b.dispatch({
+      effects: searchCompartmentRef.current.reconfigure(
+        EditorView.decorations.of(
+          editorSearchDecorations(
+            props.searchMatches ?? [],
+            props.activeSearchMatchIndex ?? -1,
+            merge.b.state.doc.length,
+          ),
+        ),
+      ),
+    });
+  }, [props.activeSearchMatchIndex, props.searchMatches]);
 
   useEffect(() => {
     const merge = mergeRef.current;
