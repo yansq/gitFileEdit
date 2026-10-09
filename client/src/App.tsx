@@ -761,21 +761,12 @@ export default function App(): JSX.Element {
 
     const stream = new EventSource("/api/stream");
 
-    stream.addEventListener("repo-changed", (event) => {
+    stream.addEventListener("repo-changed", () => {
       void (async () => {
         try {
-          let eventPath = "";
-          try {
-            const payload = JSON.parse((event as MessageEvent<string>).data) as {
-              relativePath?: unknown;
-            };
-            if (typeof payload.relativePath === "string") {
-              eventPath = payload.relativePath;
-            }
-          } catch {
-            // 无法解析事件内容时仍可使用当前选中路径刷新。
-          }
-          const nextPath = await refreshBootstrap(eventPath || selectedPath);
+          // 事件路径表示仓库中发生变化的文件，不代表用户想切换到该文件。
+          // 刷新目录和编辑内容时继续保留当前选中文件。
+          const nextPath = await refreshBootstrap(selectedPath);
           if (nextPath) {
             await refreshFile(nextPath, true);
           }
