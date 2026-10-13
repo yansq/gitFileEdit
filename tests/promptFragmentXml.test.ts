@@ -14,6 +14,17 @@ test("解析带属性和嵌套元素的完整片段", () => {
   });
 });
 
+test("片段只校验最外层标签，允许内部标签不闭合", () => {
+  assert.deepEqual(parsePromptFragment("\n<a><b></a>\n"), {
+    tagName: "a",
+    content: "<a><b></a>"
+  });
+  assert.equal(parsePromptFragment("<a><!-- unfinished</a>").tagName, "a");
+  assert.throws(() => parsePromptFragment("<a><b></b>"), /XML 标签不匹配：a \/ b/);
+  assert.throws(() => parsePromptFragment("<a><b>"), /XML 标签 <a> 没有结束/);
+  assert.throws(() => parsePromptFragment("<a/>extra"), /XML 根元素外不能包含其他文本/);
+});
+
 test("整体替换元素并保留目标前后文本", () => {
   const replacement = `<role kind="new">\nnew role\n</role>`;
   const result = replaceSinglePromptElement(

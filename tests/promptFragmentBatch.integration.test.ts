@@ -6,7 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import {
   applyPromptFragmentBatch,
-  createPromptFragmentBatchPreview
+  commitAndPushFile,
+  createPromptFragmentFile,
+  createPromptFragmentBatchPreview,
+  renamePromptFragmentFile
 } from "../server/src/git";
 import { getEnvironmentOptions } from "../server/src/config";
 import type { AppConfig } from "../server/src/types";
@@ -105,6 +108,20 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
       }
     };
 
+    for (const relativePath of ['bad"role.xml', "CON.xml", "dir\\role.xml"]) {
+      await assert.rejects(
+        createPromptFragmentFile(config, { environmentId: "templates", relativePath, tagName: "role" }),
+        /Windows/
+      );
+    }
+    await assert.rejects(
+      renamePromptFragmentFile(config, {
+        path: "templates/financial-role.xml",
+        relativePath: "NUL.xml"
+      }),
+      /Windows/
+    );
+
     assert.equal(
       getEnvironmentOptions(config).find((item) => item.id === "templates")?.requiresAdminToEdit,
       false
@@ -165,6 +182,18 @@ test("从已提交片段预览并以一个 commit 批量替换", async () => {
     assert.match(git(repoPath, "log", "-1", "--format=%B"), /来源片段：templates\/financial-role\.xml/);
     assert.equal(git(repoPath, "rev-parse", "HEAD"), git(remotePath, "rev-parse", "refs/heads/main"));
     assert.equal(git(repoPath, "rev-parse", "HEAD"), git(repoPath, "rev-parse", "origin/main"));
+
+    const fragmentPath = "templates/financial-role.xml";
+    const malformedInnerXml = "<role><b></role>\n";
+    await commitAndPushFile(config, { lastSyncedAt: null }, {
+      path: fragmentPath,
+      content: malformedInnerXml,
+      message: "更新片段内容",
+      baseHead: git(repoPath, "rev-parse", "HEAD"),
+      baseBlob: git(repoPath, "rev-parse", `HEAD:${fragmentPath}`),
+      actor: { id: "user", role: "user" }
+    });
+    assert.equal(git(remotePath, "show", `refs/heads/main:${fragmentPath}`), malformedInnerXml.trim());
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

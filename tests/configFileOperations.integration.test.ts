@@ -61,6 +61,28 @@ test("普通配置文件可以创建、重命名和删除并推送", async () =>
       createConfigFile(config, { environmentId: "dev", relativePath: "../outside.json" }),
       /有效文件路径/
     );
+    for (const relativePath of [
+      'bad"name.json', "dir:bad/file.json", "bad*.json", "bad?.json",
+      "bad<.json", "bad>.json", "bad|.json", "dir\\file.json",
+      "CON.json", "folder/NUL.properties", "folder./file.json", "file.json ",
+      "bad\u0001name.json"
+    ]) {
+      await assert.rejects(
+        createConfigFile(config, { environmentId: "dev", relativePath }),
+        /Windows|空格或句点/
+      );
+    }
+    await assert.rejects(
+      createConfigFile(config, { environmentId: "dev", relativePath: 'bad"name.json' }),
+      (error: Error & { statusCode?: number }) => error.statusCode === 400
+    );
+    await assert.rejects(
+      renameConfigFile(config, {
+        path: "nacos-config/config/dev/existing.properties",
+        relativePath: 'bad"name.properties'
+      }),
+      /Windows/
+    );
     await assert.rejects(
       renameConfigFile(config, {
         path: "nacos-config/config/dev/version-review-routing",

@@ -1072,11 +1072,28 @@ export async function restoreFileToHistoryCommit(
   };
 }
 
+class InvalidWindowsFilePathError extends Error {
+  statusCode = 400;
+}
+
+function assertWindowsCompatibleFilePath(relativePath: string): void {
+  if (/[<>:"\\|?*\x00-\x1f]/.test(relativePath)) {
+    throw new InvalidWindowsFilePathError("文件路径包含 Windows 不支持的字符");
+  }
+  for (const segment of relativePath.split("/")) {
+    if (/[. ]$/.test(segment)) throw new InvalidWindowsFilePathError("文件或目录名不能以空格或句点结尾");
+    if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(segment)) {
+      throw new InvalidWindowsFilePathError("文件路径包含 Windows 保留名称");
+    }
+  }
+}
+
 function normalizeFragmentRelativePath(relativePathValue: string): string {
-  const relativePath = relativePathValue.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const relativePath = relativePathValue.trim().replace(/^\/+|\/+$/g, "");
   if (!relativePath || relativePath.split("/").some((segment) => !segment || segment === "..")) {
     throw new Error("请输入片段库内的有效文件路径");
   }
+  assertWindowsCompatibleFilePath(relativePathValue);
   return relativePath;
 }
 
@@ -1442,10 +1459,11 @@ export async function deletePromptFragmentFile(
 }
 
 function normalizeConfigRelativePath(relativePathValue: string): string {
-  const relativePath = relativePathValue.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const relativePath = relativePathValue.trim().replace(/^\/+|\/+$/g, "");
   if (!relativePath || relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
     throw new Error("请输入当前环境内的有效文件路径");
   }
+  assertWindowsCompatibleFilePath(relativePathValue);
   return relativePath;
 }
 

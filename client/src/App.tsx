@@ -1343,7 +1343,7 @@ export default function App(): JSX.Element {
   }
 
   async function deleteConfig(pathValue: string): Promise<void> {
-    if (!window.confirm(`确认删除配置文件 ${pathValue}？删除会立即提交并推送。`)) return;
+    if (!window.confirm(`确认删除配置文件 ${pathValue}？删除会立即提交并推送。\n\n删除操作不会同步 nacos，需在 nacos 上单独执行删除操作`)) return;
     setConfigFileOperation(true);
     setError(null);
     try {
@@ -2247,6 +2247,13 @@ export default function App(): JSX.Element {
                   ref={fileSearchInputRef}
                   value={fileQuery}
                   onChange={(event) => setFileQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.currentTarget.blur();
+                    }
+                  }}
                   placeholder="搜索文件名"
                 />
                 <kbd className={searchShortcutClass}>{shortcutModifier}P</kbd>

@@ -82,52 +82,29 @@ function scanXmlTags(content: string): XmlTagToken[] {
 }
 
 export function parsePromptFragment(content: string): ParsedPromptFragment {
-  const tokens = scanXmlTags(content);
-  if (!tokens.length) throw new Error("片段必须包含一个完整 XML 根元素");
-
-  const stack: XmlTagToken[] = [];
-  let rootStart = -1;
-  let rootEnd = -1;
-  let rootName = "";
-  let rootCount = 0;
-
-  for (const token of tokens) {
-    if (token.kind === "open") {
-      if (stack.length === 0) {
-        rootCount += 1;
-        rootStart = token.start;
-        rootName = token.name;
-      }
-      stack.push(token);
-      continue;
-    }
-    if (token.kind === "self") {
-      if (stack.length === 0) {
-        rootCount += 1;
-        rootStart = token.start;
-        rootEnd = token.end;
-        rootName = token.name;
-      }
-      continue;
-    }
-    const opening = stack.pop();
-    if (!opening || opening.name !== token.name) {
-      throw new Error(`XML 标签不匹配：${opening?.name ?? "无开始标签"} / ${token.name}`);
-    }
-    if (stack.length === 0) rootEnd = token.end;
+  // 片段正文按原样保存，只检查包裹正文的根标签。
+  const rootStart = content.search(/\S/);
+  if (rootStart < 0 || content[rootStart] !== "<") {
+    throw new Error("片段必须包含一个完整 XML 根元素");
   }
 
-  if (stack.length) throw new Error(`XML 标签 <${stack[stack.length - 1].name}> 没有结束`);
-  if (rootCount !== 1 || rootStart < 0 || rootEnd < 0) {
-    throw new Error("片段文件只能包含一个 XML 根元素");
+  const openingEnd = readMarkupEnd(content, rootStart);
+  const opening = content.slice(rootStart, openingEnd).match(/^<\s*([A-Za-z_][\w:.-]*)(?:\s[\s\S]*?)?\s*(\/?)>$/);
+  if (!opening) throw new Error("片段必须包含一个完整 XML 根元素");
+
+  const rootName = opening[1];
+  if (opening[2]) {
+    if (content.slice(openingEnd).trim()) throw new Error("XML 根元素外不能包含其他文本");
+    return { tagName: rootName, content: content.slice(rootStart, openingEnd) };
   }
-  if (content.slice(0, rootStart).trim() || content.slice(rootEnd).trim()) {
-    throw new Error("XML 根元素外不能包含其他文本");
-  }
+
+  const closing = content.slice(openingEnd).match(/<\s*\/\s*([A-Za-z_][\w:.-]*)\s*>\s*$/s);
+  if (!closing) throw new Error(`XML 标签 <${rootName}> 没有结束`);
+  if (closing[1] !== rootName) throw new Error(`XML 标签不匹配：${rootName} / ${closing[1]}`);
 
   return {
     tagName: rootName,
-    content: content.slice(rootStart, rootEnd)
+    content: content.slice(rootStart).trimEnd()
   };
 }
 
