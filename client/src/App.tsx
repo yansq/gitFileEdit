@@ -15,7 +15,9 @@ import {
 } from "react";
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
+import { ChangelogDialog } from "./components/ChangelogDialog";
 import { ConfigFileDialog } from "./components/ConfigFileDialog";
+import { FilePromotionDialog } from "./components/FilePromotionDialog";
 import { EnvironmentSwitcher } from "./components/EnvironmentSwitcher";
 import { TenantSwitcher } from "./components/TenantSwitcher";
 import { FileTree } from "./components/FileTree";
@@ -76,9 +78,11 @@ type MainView = "review" | "workspace";
 type HeaderPopover = "account" | "repository" | null;
 type ActiveDialog =
   | { type: "activation" }
+  | { type: "changelog" }
   | { type: "commit" }
   | { type: "environment-settings" }
   | { type: "fragment-batch" }
+  | { type: "file-promotion"; sourcePath: string }
   | { type: "config-file"; mode: "create" }
   | { type: "config-file"; mode: "rename"; path: string }
   | { type: "fragment-file"; mode: "create" | "rename" }
@@ -1636,6 +1640,24 @@ export default function App(): JSX.Element {
           }}
         />
       ) : null}
+      {activeDialog?.type === "file-promotion" && selectedFileEnvironment ? (
+        <FilePromotionDialog
+          sourcePath={activeDialog.sourcePath}
+          sourceEnvironment={selectedFileEnvironment}
+          environments={environmentOptions}
+          isAdmin={authUser?.role === "admin"}
+          onClose={() => setActiveDialog(null)}
+          onAuthError={(promotionError) => { handleAuthRequired(promotionError); }}
+          onApplied={async (targetPath) => {
+            setActiveDialog(null);
+            setMessage(`已晋级到 ${targetPath}，并提交推送到远程仓库`);
+            await refreshBootstrap(selectedPath);
+          }}
+        />
+      ) : null}
+      {activeDialog?.type === "changelog" ? (
+        <ChangelogDialog onClose={() => setActiveDialog(null)} />
+      ) : null}
       <header className="relative z-50 flex min-h-[52px] items-center justify-between gap-4 overflow-visible border-b border-ui-border bg-surface px-ui-4 py-ui-2">
         <div className="flex min-w-0 items-center gap-ui-3">
           <div className="min-w-0">
@@ -1714,6 +1736,23 @@ export default function App(): JSX.Element {
               </svg>
             </ToolbarIconButton>
           </div>
+          <Button
+            aria-expanded={activeDialog?.type === "changelog"}
+            aria-haspopup="dialog"
+            className="px-ui-2"
+            onClick={() => {
+              setOpenHeaderPopover(null);
+              setActiveDialog({ type: "changelog" });
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+              <rect height="18" rx="2" width="14" x="5" y="3" />
+              <path d="M9 7h6M9 11h6M9 15h4" />
+            </svg>
+            更新日志
+          </Button>
           <Button
             aria-label={reviewOpen ? "返回文件工作区" : "打开版本比对"}
             className={cn("px-ui-2", reviewOpen && "bg-primary-soft text-primary")}
@@ -2655,6 +2694,19 @@ export default function App(): JSX.Element {
                       </svg>
                     </ToolbarIconButton>
                   </div>
+                ) : null}
+                {!isFragmentLibrary ? (
+                  <span
+                    className="ml-ui-1 inline-flex border-l border-ui-border pl-ui-2"
+                    title={hasPendingChanges ? "请先提交当前文件，再执行晋级" : undefined}
+                  >
+                    <Button
+                      disabled={!selectedPath || !fileDetail || hasPendingChanges || fileOperationInProgress || committing || syncing}
+                      onClick={() => setActiveDialog({ type: "file-promotion", sourcePath: selectedPath })}
+                    >
+                      晋级
+                    </Button>
+                  </span>
                 ) : null}
                 {isFragmentLibrary ? (
                   <span

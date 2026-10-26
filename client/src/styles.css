@@ -159,6 +159,12 @@
     overflow: auto;
     overscroll-behavior-y: auto;
   }
+
+  .cm-promotion-diff > .cm-mergeView {
+    height: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -16,6 +16,8 @@ import {
 import { ConfigFileValidationError } from "./fileValidation";
 import {
   commitAndPushFile,
+  applyFilePromotion,
+  createFilePromotionPreview,
   applyPromptFragmentBatch,
   createConfigFile,
   createPromptFragmentBatchPreview,
@@ -24,6 +26,7 @@ import {
   deletePromptFragmentFile,
   discardRepoFileChanges,
   FileConflictError,
+  FilePromotionTargetRequiredError,
   getEnvironmentIdForFile,
   inspectRepo,
   listRepoFiles,
@@ -539,6 +542,53 @@ app.post("/api/prompt-fragments/apply", async (request, response, next) => {
     response.json(result);
   } catch (error) {
     lastRepoError = toErrorMessage(error);
+    next(error);
+  }
+});
+
+app.post("/api/file-promotion/preview", async (request, response, next) => {
+  try {
+    const sourcePath = String(request.body.sourcePath ?? "").trim();
+    const targetEnvironmentId = String(request.body.targetEnvironmentId ?? "").trim();
+    const targetPath = String(request.body.targetPath ?? "").trim();
+    if (!sourcePath || !targetEnvironmentId) {
+      response.status(400).json({ error: "请选择来源文件和目标环境" });
+      return;
+    }
+    const config = await loadAppConfig();
+    response.json(await withRepoMutationLock(() => createFilePromotionPreview(config, {
+      sourcePath, targetEnvironmentId, targetPath, actor: request.user
+    })));
+  } catch (error) {
+    if (error instanceof FilePromotionTargetRequiredError) {
+      response.status(error.statusCode).json({ error: error.message, targetPaths: error.targetPaths });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.post("/api/file-promotion/apply", async (request, response, next) => {
+  try {
+    const sourcePath = String(request.body.sourcePath ?? "").trim();
+    const targetEnvironmentId = String(request.body.targetEnvironmentId ?? "").trim();
+    const targetPath = String(request.body.targetPath ?? "").trim();
+    const baseHead = String(request.body.baseHead ?? "").trim();
+    const message = String(request.body.message ?? "").trim();
+    if (!sourcePath || !targetEnvironmentId || !baseHead) {
+      response.status(400).json({ error: "晋级确认信息不完整，请重新查看差异" });
+      return;
+    }
+    const config = await loadAppConfig();
+    const result = await withRepoMutationLock(() => applyFilePromotion(config, {
+      sourcePath, targetEnvironmentId, targetPath, baseHead, message, actor: request.user
+    }));
+    await markLastSyncedAt(new Date().toISOString());
+    await ensureWatcher();
+    lastRepoError = null;
+    notifier.broadcast("repo-changed", { relativePath: result.path, eventType: "commit" });
+    response.json(result);
+  } catch (error) {
     next(error);
   }
 });

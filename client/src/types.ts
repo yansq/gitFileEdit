@@ -8,6 +8,18 @@ export interface GitSettingsSummary {
   commitMessagePrefix: string;
 }
 
+export interface FilePromotionPreview {
+  baseHead: string;
+  sourcePath: string;
+  targetPath: string;
+  targetEnvironmentId: string;
+  sourceEnvironmentLabel: string;
+  targetEnvironmentLabel: string;
+  beforeContent: string;
+  afterContent: string;
+  canApply: boolean;
+}
+
 export interface AuthUser {
   id: string;
   role: "user" | "admin";

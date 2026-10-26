@@ -6,6 +6,7 @@ import {
   access,
   mkdir,
   readFile,
+  realpath,
   stat,
   unlink,
   writeFile
@@ -28,6 +29,7 @@ import type {
   CommitSnapshot,
   FileConflictPayload,
   FileDetail,
+  FilePromotionPreview,
   EnvironmentReviewCommit,
   EnvironmentReviewDiff,
   EnvironmentReviewFile,
@@ -45,6 +47,14 @@ export class FileConflictError extends Error {
 
   constructor(public payload: FileConflictPayload) {
     super(payload.message);
+  }
+}
+
+export class FilePromotionTargetRequiredError extends Error {
+  statusCode = 409;
+
+  constructor(public targetPaths: string[]) {
+    super("目标环境存在多个同名文件，请选择具体的目标文件");
   }
 }
 
@@ -1485,6 +1495,125 @@ function getInitialConfigFileContent(filePath: string): string {
       return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<config>\n</config>\n";
     default:
       return "";
+  }
+}
+
+export async function createFilePromotionPreview(
+  config: AppConfig,
+  input: { sourcePath: string; targetEnvironmentId: string; targetPath?: string; actor?: AuthUser }
+): Promise<FilePromotionPreview> {
+  const repoPath = resolveRepoPath(config);
+  const sourcePath = normalizeAllowedFilePath(config, repoPath, input.sourcePath);
+  const sourceEnvironment = getEnvironmentForFile(config, sourcePath);
+  const targetEnvironment = getEnvironmentOptions(config).find((item) => item.id === input.targetEnvironmentId);
+  if (!targetEnvironment || targetEnvironment.kind !== "config") {
+    throw Object.assign(new Error("请选择有效的普通配置环境"), { statusCode: 400 });
+  }
+  if (!sourceEnvironment || sourceEnvironment.kind !== "config") {
+    throw Object.assign(new Error("只能晋级普通配置文件"), { statusCode: 400 });
+  }
+  if (sourceEnvironment.id === targetEnvironment.id || sourceEnvironment.tenantId !== targetEnvironment.tenantId) {
+    throw Object.assign(new Error("请选择同一租户下的其他配置环境"), { statusCode: 400 });
+  }
+  if (!input.actor || (targetEnvironment.requiresAdminToEdit && input.actor.role !== "admin")) {
+    throw Object.assign(new Error("没有目标环境的写权限，无法晋级"), { statusCode: 403 });
+  }
+  const relativePath = normalizeConfigRelativePath(sourcePath.slice(sourceEnvironment.root.length + 1));
+  let targetPath = normalizeAllowedFilePath(config, repoPath, input.targetPath || `${targetEnvironment.root}/${relativePath}`);
+  if (
+    getEnvironmentForFile(config, targetPath)?.id !== targetEnvironment.id ||
+    !isAllowedConfigFile(config, targetPath) ||
+    path.posix.basename(targetPath) !== path.posix.basename(sourcePath)
+  ) {
+    throw Object.assign(new Error("目标配置文件路径或扩展名不在允许范围内"), { statusCode: 400 });
+  }
+
+  await fetchRemoteBranch(config, repoPath);
+  const baseHead = await readGitRef(repoPath, `origin/${config.repo.branch}`);
+  if (!baseHead) throw new Error("远程分支没有可用版本");
+  if (!input.targetPath && !(await readGitBlobId(repoPath, baseHead, targetPath))) {
+    const tree = await runGitRaw(["ls-tree", "-r", "--name-only", "-z", baseHead, "--", targetEnvironment.root], { cwd: repoPath });
+    const candidates = tree.split("\0").filter((filePath) =>
+      filePath &&
+      path.posix.basename(filePath) === path.posix.basename(sourcePath) &&
+      getEnvironmentForFile(config, filePath)?.id === targetEnvironment.id
+    ).sort();
+    if (candidates.length > 1) throw new FilePromotionTargetRequiredError(candidates);
+    if (candidates.length === 1) targetPath = candidates[0];
+  }
+  // 只接受普通 Git 文件，避免把符号链接或目录当作配置文件覆盖。
+  for (const [filePath, label] of [[sourcePath, "来源"], [targetPath, "目标"]]) {
+    const entry = await runGit(["ls-tree", baseHead, "--", filePath], { cwd: repoPath });
+    if (!entry) {
+      throw Object.assign(new Error(`${label}环境不存在对应配置文件：${filePath}`), { statusCode: 404 });
+    }
+    if (!/^100(?:644|755) blob /.test(entry)) {
+      throw Object.assign(new Error(`${label}路径必须是普通配置文件`), { statusCode: 400 });
+    }
+  }
+  const [beforeContent, afterContent] = await Promise.all([
+    runGitRaw(["show", `${baseHead}:${targetPath}`], { cwd: repoPath }),
+    runGitRaw(["show", `${baseHead}:${sourcePath}`], { cwd: repoPath })
+  ]);
+  validateConfigFileContent(targetPath, afterContent);
+  return {
+    baseHead,
+    sourcePath,
+    targetPath,
+    targetEnvironmentId: targetEnvironment.id,
+    sourceEnvironmentLabel: sourceEnvironment.label,
+    targetEnvironmentLabel: targetEnvironment.label,
+    beforeContent,
+    afterContent,
+    canApply: beforeContent !== afterContent
+  };
+}
+
+export async function applyFilePromotion(
+  config: AppConfig,
+  input: { sourcePath: string; targetEnvironmentId: string; targetPath?: string; baseHead: string; message: string; actor?: AuthUser }
+): Promise<{ head: string; path: string }> {
+  const preview = await createFilePromotionPreview(config, input);
+  if (preview.baseHead !== input.baseHead.trim()) {
+    throw Object.assign(new Error("仓库版本已变化，请重新查看晋级差异后确认"), { statusCode: 409 });
+  }
+  if (!preview.canApply) {
+    throw Object.assign(new Error("两个环境的文件内容相同，无需晋级"), { statusCode: 400 });
+  }
+  const repoPath = resolveRepoPath(config);
+  await assertPathsClean(repoPath, [preview.sourcePath, preview.targetPath]);
+  await ensureFastForwardedRemote(config, repoPath);
+  const originalHead = await readGitRef(repoPath, "HEAD");
+  if (originalHead !== preview.baseHead) {
+    throw Object.assign(new Error("本地仓库存在未推送提交，请先同步仓库后重试"), { statusCode: 409 });
+  }
+  const absolutePath = path.resolve(repoPath, preview.targetPath);
+  const canonicalRepoPath = await realpath(repoPath);
+  if (await realpath(absolutePath) !== path.resolve(canonicalRepoPath, preview.targetPath)) {
+    throw Object.assign(new Error("目标路径包含符号链接，无法晋级"), { statusCode: 400 });
+  }
+  let committed = false;
+  try {
+    await writeFile(absolutePath, preview.afterContent, "utf8");
+    await runGit(["add", "--", preview.targetPath], { cwd: repoPath });
+    const commitMessage = [
+      `${config.repo.commitMessagePrefix || ""}晋级 ${preview.sourceEnvironmentLabel} → ${preview.targetEnvironmentLabel} ${path.posix.basename(preview.targetPath)}`.trim(),
+      `来源文件：${preview.sourcePath}`,
+      `目标文件：${preview.targetPath}`,
+      `来源版本：${preview.baseHead}`,
+      input.actor ? `提交用户：${input.actor.id}` : null,
+      input.message.trim() || null
+    ].filter(Boolean).join("\n\n");
+    await runGit(
+      [...getGitCommitIdentityArgs(config, input.actor), "commit", "--no-gpg-sign", "-m", commitMessage, "--", preview.targetPath],
+      { cwd: repoPath }
+    );
+    committed = true;
+    await pushCurrentBranch(config, repoPath);
+    return { head: (await readGitRef(repoPath, "HEAD")) ?? "", path: preview.targetPath };
+  } catch (error) {
+    await rollbackGeneratedCommit(repoPath, originalHead, [preview.targetPath], committed);
+    throw error;
   }
 }
 
