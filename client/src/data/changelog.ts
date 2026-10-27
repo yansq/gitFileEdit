@@ -1,5 +1,27 @@
 export const changelogEntries = [
   {
+    date: "2026-10-27",
+    title: "MCP 只读查询与 Agent 接入",
+    sections: [
+      {
+        title: "新增功能",
+        items: [
+          "新增 MCP Server，其他 Agent 接入后可搜索配置文件和配置项、查询配置值、追溯修改人，以及查看指定环境和时间范围内的配置改动。",
+          "支持 Properties、YAML 和无后缀文件识别；格式存在歧义时可指定格式。JSON、XML 暂仅支持文本搜索和文件差异查询。",
+          "查询以远端已提交版本为准，返回版本与同步状态；配置项历史保留修改、恢复、重命名和删除记录，支持分页查询。",
+        ],
+      },
+      {
+        title: "接入方式",
+        items: [
+          "点击顶部“MCP 接入”，复制当前服务地址和客户端配置，在支持 Streamable HTTP 的 Agent 中添加服务。",
+          "MCP 与网页共用端口，地址为网页服务地址加 /mcp，无需额外容器或端口映射。",
+          "如服务端设置了 APP_MCP_TOKEN，需在客户端携带 Authorization: Bearer 接入凭据；未设置时无需填写。",
+        ],
+      },
+    ],
+  },
+  {
     date: "2026-10-26",
     title: "文件晋级与差异预览优化",
     sections: [

@@ -212,11 +212,13 @@ async function runGit(
   args: string[],
   options: {
     cwd: string;
+    timeoutMs?: number;
   }
 ): Promise<string> {
   try {
     const result = await execFileAsync("git", args, {
       cwd: options.cwd,
+      timeout: options.timeoutMs,
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: "0"
@@ -403,7 +405,7 @@ export async function syncRepo(
   });
 }
 
-async function fetchRemoteBranch(config: AppConfig, repoPath: string): Promise<void> {
+export async function fetchRemoteBranch(config: AppConfig, repoPath: string, timeoutMs?: number): Promise<void> {
   await runGit(
     buildGitArgsWithManagedCredentials(config, [
       "fetch",
@@ -412,7 +414,8 @@ async function fetchRemoteBranch(config: AppConfig, repoPath: string): Promise<v
       `+refs/heads/${config.repo.branch}:${getRemoteTrackingRef(config)}`
     ]),
     {
-      cwd: repoPath
+      cwd: repoPath,
+      timeoutMs
     }
   );
 }

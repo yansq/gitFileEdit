@@ -12,4 +12,7 @@ services:
       APP_SESSION_SECRET: "abcdef123456"
       APP_ACTIVATION_SECRET: "change-this-activation-secret"
       APP_USERS_PATH: "/app/data/users.json"
+      APP_MCP_TOKEN: "${APP_MCP_TOKEN:-}"
+      APP_MCP_FORMAT_OVERRIDES: '${APP_MCP_FORMAT_OVERRIDES:-{}}'
+      APP_MCP_ALLOWED_ORIGINS: "${APP_MCP_ALLOWED_ORIGINS:-}"
     restart: unless-stopped

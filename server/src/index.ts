@@ -43,6 +43,7 @@ import {
 import { withRepoMutationLock } from "./repoMutationLock";
 import { RepoEventHub, RepoWatcher } from "./repoWatcher";
 import type { AppConfig } from "./types";
+import { createMcpRouter, mcpOptionsFromEnv } from "./mcp/server";
 
 const app = express();
 const notifier = new RepoEventHub();
@@ -54,6 +55,7 @@ const clientDistPath = path.resolve(__dirname, "../client");
 let lastRepoError: string | null = null;
 
 app.use(express.json({ limit: "5mb" }));
+app.use("/mcp", createMcpRouter(mcpOptionsFromEnv()));
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "未知错误";
@@ -744,6 +746,15 @@ app.get("*", (_request, response) => {
 
 app.use(
   (error: unknown, request: Request, response: Response, _next: NextFunction) => {
+    if (request.path === "/mcp" || request.path.startsWith("/mcp/")) {
+      const statusCode = toStatusCode(error);
+      response.status(statusCode).json({
+        jsonrpc: "2.0",
+        error: { code: statusCode === 400 ? -32700 : -32603, message: statusCode === 400 ? "MCP JSON 请求解析失败" : "MCP 请求处理失败" },
+        id: null
+      });
+      return;
+    }
     if (error instanceof FileConflictError) {
       response.status(error.statusCode).json(error.payload);
       return;

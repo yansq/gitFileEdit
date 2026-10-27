@@ -16,6 +16,7 @@ import {
 import { AuthScreen } from "./components/AuthScreen";
 import { CommitConfirmDialog } from "./components/CommitConfirmDialog";
 import { ChangelogDialog } from "./components/ChangelogDialog";
+import { McpConnectionDialog } from "./components/McpConnectionDialog";
 import { ConfigFileDialog } from "./components/ConfigFileDialog";
 import { FilePromotionDialog } from "./components/FilePromotionDialog";
 import { EnvironmentSwitcher } from "./components/EnvironmentSwitcher";
@@ -79,6 +80,7 @@ type HeaderPopover = "account" | "repository" | null;
 type ActiveDialog =
   | { type: "activation" }
   | { type: "changelog" }
+  | { type: "mcp-connection" }
   | { type: "commit" }
   | { type: "environment-settings" }
   | { type: "fragment-batch" }
@@ -1658,6 +1660,9 @@ export default function App(): JSX.Element {
       {activeDialog?.type === "changelog" ? (
         <ChangelogDialog onClose={() => setActiveDialog(null)} />
       ) : null}
+      {activeDialog?.type === "mcp-connection" ? (
+        <McpConnectionDialog onClose={() => setActiveDialog(null)} />
+      ) : null}
       <header className="relative z-50 flex min-h-[52px] items-center justify-between gap-4 overflow-visible border-b border-ui-border bg-surface px-ui-4 py-ui-2">
         <div className="flex min-w-0 items-center gap-ui-3">
           <div className="min-w-0">
@@ -1736,6 +1741,22 @@ export default function App(): JSX.Element {
               </svg>
             </ToolbarIconButton>
           </div>
+          <Button
+            aria-expanded={activeDialog?.type === "mcp-connection"}
+            aria-haspopup="dialog"
+            className="px-ui-2"
+            onClick={() => {
+              setOpenHeaderPopover(null);
+              setActiveDialog({ type: "mcp-connection" });
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+              <path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v5" />
+            </svg>
+            MCP 接入
+          </Button>
           <Button
             aria-expanded={activeDialog?.type === "changelog"}
             aria-haspopup="dialog"
