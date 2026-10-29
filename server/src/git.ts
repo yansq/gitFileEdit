@@ -1289,7 +1289,7 @@ export async function createPromptFragmentBatchPreview(
     unchangedCount: count("unchanged"),
     missingCount: count("missing"),
     errorCount,
-    canApply: errorCount === 0 && count("changed") > 0,
+    canApply: count("changed") > 0,
     items: matchedItems.sort((left, right) => left.path.localeCompare(right.path))
   };
 }
@@ -1310,15 +1310,13 @@ export async function applyPromptFragmentBatch(
   if (preview.baseHead !== input.baseHead.trim()) {
     throw Object.assign(new Error("远程仓库已发生变化，请重新生成批量替换预览"), { statusCode: 409 });
   }
-  if (preview.errorCount > 0) throw new Error("匹配文件中存在 XML 标签异常，不能提交");
-
   const selectable = new Map(
     preview.items.filter((item) => item.status === "changed").map((item) => [item.path, item])
   );
   const selectedPaths = Array.from(new Set(input.selectedPaths.map((item) => item.trim()))).sort();
   if (!selectedPaths.length) throw new Error("请至少选择一个需要替换的文件");
   if (selectedPaths.some((item) => !selectable.has(item))) {
-    throw new Error("选择的文件不属于当前批量替换预览");
+    throw new Error("选择的文件不属于当前批量替换预览中的可替换文件");
   }
 
   const repoPath = resolveRepoPath(config);

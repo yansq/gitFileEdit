@@ -4,13 +4,15 @@
   },
   "repo": {
     "localPath": "./data/repo",
-    "remoteUrl": "http://12.103.118.207:10880/AI/aifp-config-tob.git",
-    "branch": "master",
+    "remoteUrl": "/Users/yansiqi/Developer/work/gitFileEdit/data/test-remote.git",
+    "branch": "main",
     "configRoot": "nacos-config/config",
     "visibleRoots": [
       "nacos-config/config/dev",
       "nacos-config/config/sit",
-      "nacos-config/config/uat"
+      "nacos-config/config/uat",
+      "nacos-config/config/prompt-clips",
+      "nacos-config/lite/dev"
     ],
     "allowedExtensions": [
       "",
@@ -37,24 +39,58 @@
       "username": "rhb",
       "password": "nbcb,111"
     },
+    "tenants": [
+      {
+        "id": "config",
+        "label": "config",
+        "root": "nacos-config/config"
+      },
+      {
+        "id": "tenant-1789718221581-2",
+        "label": "lite",
+        "root": "nacos-config/lite"
+      }
+    ],
     "environments": [
       {
         "id": "dev",
+        "tenantId": "config",
         "label": "开发环境",
         "root": "nacos-config/config/dev",
-        "requiresAdminToEdit": false
+        "requiresAdminToEdit": false,
+        "kind": "config"
       },
       {
         "id": "sit",
+        "tenantId": "config",
         "label": "SIT环境",
         "root": "nacos-config/config/sit",
-        "requiresAdminToEdit": false
+        "requiresAdminToEdit": false,
+        "kind": "config"
       },
       {
         "id": "uat",
+        "tenantId": "config",
         "label": "UAT环境",
         "root": "nacos-config/config/uat",
-        "requiresAdminToEdit": true
+        "requiresAdminToEdit": true,
+        "kind": "config"
+      },
+      {
+        "id": "env-1788158369972-4",
+        "tenantId": "config",
+        "label": "prompt片段",
+        "root": "nacos-config/config/prompt-clips",
+        "requiresAdminToEdit": false,
+        "kind": "fragment-library"
+      },
+      {
+        "id": "env-1789718232307-5",
+        "tenantId": "tenant-1789718221581-2",
+        "label": "dev",
+        "root": "nacos-config/lite/dev",
+        "requiresAdminToEdit": false,
+        "kind": "config"
       }
     ],
     "commitMessagePrefix": "config: ",

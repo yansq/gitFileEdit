@@ -203,8 +203,8 @@ export function PromptFragmentBatchDialog(props: {
             </div>
 
             {preview.errorCount ? (
-              <div className="rounded-ui-md border border-danger/20 bg-danger-soft px-3 py-2 text-sm text-danger">
-                存在 XML 标签异常。必须先修复所有异常文件，再重新生成预览。
+              <div className="rounded-ui-md border border-warning/20 bg-warning-soft px-3 py-2 text-sm text-warning">
+                存在 XML 标签异常的文件，无法勾选；其他可替换文件仍可提交。可在“异常”中查看原因。
               </div>
             ) : null}
 
@@ -229,9 +229,11 @@ export function PromptFragmentBatchDialog(props: {
                   >
                     <summary className="cursor-pointer list-none">
                       <div className="flex flex-wrap items-center gap-2">
-                        {selectable ? (
+                        {selectable || item.status === "error" ? (
                           <input
-                            checked={selectedPaths.includes(item.path)}
+                            aria-label={`选择 ${item.path}`}
+                            checked={selectable && selectedPaths.includes(item.path)}
+                            disabled={!selectable}
                             onClick={(event) => event.stopPropagation()}
                             onChange={(event) => setSelectedPaths((current) =>
                               event.target.checked

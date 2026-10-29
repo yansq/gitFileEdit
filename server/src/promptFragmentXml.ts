@@ -108,33 +108,47 @@ export function parsePromptFragment(content: string): ParsedPromptFragment {
   };
 }
 
+function isStandaloneTag(content: string, token: XmlTagToken): boolean {
+  const lineStart = content.lastIndexOf("\n", token.start - 1) + 1;
+  const nextLine = content.indexOf("\n", token.end);
+  const lineEnd = nextLine === -1 ? content.length : nextLine;
+  return /^[\t ]*$/.test(content.slice(lineStart, token.start))
+    && /^[\t \r]*$/.test(content.slice(token.end, lineEnd));
+}
+
 export function findPromptElementRanges(content: string, tagName: string): PromptElementRange[] {
-  const tokens = scanXmlTags(content).filter((token) => token.name === tagName);
+  const matchingTokens = scanXmlTags(content).filter((token) => token.name === tagName);
+  const standaloneTokens = matchingTokens.filter((token) => isStandaloneTag(content, token));
+  // 配置正文可能内联引用同名标签。若存在独占行的完整标签块，以它作为替换目标。
+  const tokens = standaloneTokens.some((token) => token.kind === "open")
+    && standaloneTokens.some((token) => token.kind === "close")
+    ? standaloneTokens
+    : matchingTokens;
   const ranges: PromptElementRange[] = [];
-  let depth = 0;
-  let start = -1;
+  const openings: XmlTagToken[] = [];
 
   for (const token of tokens) {
     if (token.kind === "self") {
-      if (depth > 0) throw new Error(`标签 <${tagName}> 存在同名嵌套`);
       ranges.push({ start: token.start, end: token.end });
       continue;
     }
     if (token.kind === "open") {
-      if (depth > 0) throw new Error(`标签 <${tagName}> 存在同名嵌套`);
-      depth += 1;
-      start = token.start;
+      openings.push(token);
       continue;
     }
-    if (depth === 0) throw new Error(`标签 </${tagName}> 缺少开始标签`);
-    depth -= 1;
-    if (depth === 0) {
-      ranges.push({ start, end: token.end });
-      start = -1;
-    }
+    const opening = openings.pop();
+    if (!opening) throw new Error(`标签 </${tagName}> 缺少开始标签`);
+    ranges.push({ start: opening.start, end: token.end });
   }
 
-  if (depth !== 0) throw new Error(`标签 <${tagName}> 缺少结束标签`);
+  ranges.sort((left, right) => left.start - right.start);
+  if (ranges.some((range, index) => index > 0 && range.start < ranges[index - 1].end)) {
+    throw new Error(`标签 <${tagName}> 存在同名嵌套`);
+  }
+  // 完整标签块外的未闭合引用不属于替换范围，不能阻止唯一完整块的替换。
+  if (openings.length && ranges.length === 0) {
+    throw new Error(`标签 <${tagName}> 缺少结束标签`);
+  }
   return ranges;
 }
 
